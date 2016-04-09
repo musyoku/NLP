@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-import os, sys, time
 import numpy as np
+import chainer
 from chainer import cuda, Variable, optimizers, serializers, function, link
 from chainer.utils import type_check
 from chainer import functions as F
 from chainer import links as L
+from config import config
 import model
 
 class LSTM(chainer.Chain):
@@ -114,12 +115,12 @@ def build():
 	lstm_units = zip(config.lstm_units[:-1], config.lstm_units[1:])
 
 	for i, (n_in, n_out) in enumerate(lstm_units):
-		lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out, wscale=wscale)
-		lstm_attributes["batchnorm_%i" % i] = BatchNormalization(n_out)
+		lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+		lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
 
 	lstm = LSTM(**lstm_attributes)
 	lstm.n_layers = len(lstm_units)
-	lstm.activation_function = config.q_lstm_activation_function
+	lstm.activation_function = config.lstm_activation_function
 	lstm.apply_batchnorm = config.apply_batchnorm
 	lstm.apply_batchnorm_to_input = config.lstm_apply_batchnorm_to_input
 	lstm.apply_dropout = config.lstm_apply_dropout
@@ -131,15 +132,16 @@ def build():
 
 	for i, (n_in, n_out) in enumerate(fc_units):
 		fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-		fc_attributes["batchnorm_%i" % i] = BatchNormalization(n_out)
+		fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
 
 	fc = FullyConnectedNetwork(**fc_attributes)
 	fc.n_hidden_layers = len(fc_units) - 1
-	fc.activation_function = config.q_fc_activation_function
+	fc.activation_function = config.fc_activation_function
 	fc.apply_batchnorm_to_input = config.fc_apply_batchnorm_to_input
 	fc.apply_batchnorm_to_output = config.fc_apply_batchnorm_to_output
 	fc.apply_batchnorm = config.apply_batchnorm
 	fc.apply_dropout = config.fc_apply_dropout
 	if config.use_gpu:
 		fc.to_gpu()
-	return lstm, fc
+
+	return Model(lstm, fc)

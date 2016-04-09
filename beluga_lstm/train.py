@@ -2,3 +2,5 @@
 import os, sys, time
 import numpy as np
 import model
+
+beluga = model.build()
