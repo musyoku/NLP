@@ -6,6 +6,8 @@ class Config:
 	def __init__(self):
 		self.use_gpu = True
 		self.apply_batchnorm = True
+		self.learning_rate = 0.00025
+		self.gradient_momentum = 0.95
 
 		# 文字埋め込みベクトルの次元数
 		self.embed_size = 200
@@ -16,12 +18,14 @@ class Config:
 		self.lstm_units = [self.embed_size, 1024, 512]
 		self.lstm_apply_batchnorm_to_input = False
 		self.lstm_apply_dropout = False
+		self.lstm_activation_function = "elu"
 
 		# LSTM出力を埋め込みベクトルに変換する全結合層の各ユニット数 
 		self.fc_units = [self.lstm_units[-1], 1024, 512, self.embed_size]
 		self.fc_apply_batchnorm_to_input = False
 		self.fc_apply_batchnorm_to_output = False
 		self.fc_apply_dropout = False
+		self.fc_activation_function = "elu"
 
 	def check(self):
 		if len(self.lstm_units) < 2:
