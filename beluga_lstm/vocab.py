@@ -18,8 +18,17 @@ def load(dir):
 				word = line[i]
 				if word not in vocab:
 					vocab[word] = len(vocab)
+					inv_vocab[vocab[word]] = word
 				data[i] = vocab[word]
 			dataset.append(data)
-	print "# of chars:", len(vocab)
-	print "# of data:", len(dataset)
-	return dataset
+	n_vocab = len(vocab)
+	n_dataset = len(dataset)
+	print "# of chars:", n_vocab
+	print "# of data:", n_dataset
+	return dataset, n_vocab, n_dataset
+
+def id_to_word(id):
+	return inv_vocab[id]
+
+def word_to_id(word):
+	return vocab[word]

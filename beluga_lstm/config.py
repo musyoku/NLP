@@ -5,7 +5,7 @@ from activations import activations
 class Config:
 	def __init__(self):
 		self.use_gpu = True
-		self.apply_batchnorm = True
+		self.apply_batchnorm = False
 		self.learning_rate = 0.00025
 		self.gradient_momentum = 0.95
 
@@ -15,13 +15,13 @@ class Config:
 		# 各LSTMレイヤのユニット数を入力側から出力側に向かって並べる
 		## e.g 500(input vector)->250->100(output vector)
 		## self.q_fc_units = [500, 250, 100]
-		self.lstm_units = [self.embed_size, 1024, 512]
+		self.lstm_units = [self.embed_size, 1024]
 		self.lstm_apply_batchnorm_to_input = False
 		self.lstm_apply_dropout = False
 		self.lstm_activation_function = "elu"
 
-		# LSTM出力を埋め込みベクトルに変換する全結合層の各ユニット数 
-		self.fc_units = [self.lstm_units[-1], 1024, 512, self.embed_size]
+		# LSTM出力をIDに変換する全結合層の各ユニット数 
+		self.fc_units = [self.lstm_units[-1], 1024, 512]
 		self.fc_apply_batchnorm_to_input = False
 		self.fc_apply_batchnorm_to_output = False
 		self.fc_apply_dropout = False
