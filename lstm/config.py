@@ -21,7 +21,10 @@ class Config:
 		self.lstm_activation_function = None
 
 		# LSTM出力をIDに変換する全結合層の各ユニット数 
+		## 出力であるソフトマックス層は自動的に挿入されます
 		self.fc_units = [self.lstm_units[-1], 4096, 4096]
+		
+		# Batch Normalizationはあまり効果がない？
 		self.fc_apply_batchnorm = False
 		self.fc_apply_batchnorm_to_input = False
 		self.fc_apply_batchnorm_to_output = False

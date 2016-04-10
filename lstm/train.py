@@ -14,8 +14,13 @@ n_epoch = 1000
 n_train = 5000
 batchsize = 64
 total_time = 0
-max_length_of_data = 100
-length_limit = 15
+
+# 長すぎるデータはメモリに乗らないこともあります
+max_length_of_chars = 100
+
+# 学習初期は短い文章のみ学習し、徐々に長くしていきます。
+# この機能が必要ない場合は最初から大きな値を設定します。
+current_length_limit = 15
 
 for epoch in xrange(n_epoch):
 	start_time = time.time()
@@ -24,8 +29,8 @@ for epoch in xrange(n_epoch):
 		batch_array = []
 		max_length_in_batch = 0
 		for b in xrange(batchsize):
-			length = length_limit + 1
-			while length > length_limit:
+			length = current_length_limit + 1
+			while length > current_length_limit:
 				k = np.random.randint(0, n_dataset)
 				data = dataset[k]
 				length = len(data)
@@ -43,8 +48,8 @@ for epoch in xrange(n_epoch):
 	elapsed_time = time.time() - start_time
 	total_time += elapsed_time
 	sys.stdout.write("\r")
-	print "epoch:", epoch, "loss:", sum_loss / float(n_train), "time:", int(elapsed_time / 60), "min", "total_time:", int(total_time / 60), "min", "length_limit:", length_limit
+	print "epoch:", epoch, "loss:", sum_loss / float(n_train), "time:", int(elapsed_time / 60), "min", "total_time:", int(total_time / 60), "min", "current_length_limit:", current_length_limit
 	sys.stdout.flush()
 	lm.save(model_dir)
 	if epoch % 10 == 0 and epoch != 0:
-		length_limit = (length_limit + 5) if length_limit < max_length_of_data else max_length_of_data
+		current_length_limit = (current_length_limit + 5) if current_length_limit < max_length_of_chars else max_length_of_chars
