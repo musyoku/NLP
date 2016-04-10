@@ -109,30 +109,36 @@ class Model:
 			output = F.softmax(output)
 		return output
 
+	@property
+	def xp(self):
+		return np if self.lstm.layer_0._cpu else cuda.cupy
+
 	def reset_state(self):
 		self.lstm.reset_state()
 
 	def predict(self, word, gpu=True, test=True):
-		xp = cuda.cupy if gpu else np
+		xp = self.xp
 		c0 = Variable(xp.asarray([word], dtype=np.int32))
 		output = self(c0, test=test, softmax=False)
 		ids = xp.argmax(output.data, axis=1)
 		return ids
 
 	def distribution(self, word, gpu=True, test=True):
-		xp = cuda.cupy if gpu else np
+		xp = self.xp
 		c0 = Variable(xp.asarray([word], dtype=np.int32))
 		output = self(c0, test=test, softmax=True)
 		if gpu:
 			output.to_cpu()
 		return output.data
 
-	def learn(self, seq, gpu=True, test=False):
-		xp = cuda.cupy if gpu else np
+	def learn(self, seq_batch, gpu=True, test=False):
+		xp = self.xp
 		sum_loss = 0
-		for c0, c1 in zip(seq[:-1], seq[1:]):
-			c0 = Variable(xp.asarray([c0], dtype=np.int32))
-			c1 = Variable(xp.asarray([c1], dtype=np.int32))
+		seq_batch = seq_batch.T
+		for c0, c1 in zip(seq_batch[:-1], seq_batch[1:]):
+			c0[c0 == -1.0] = 0.0
+			c0 = Variable(xp.asarray(c0, dtype=np.int32))
+			c1 = Variable(xp.asarray(c1, dtype=np.int32))
 			output = self(c0, test=test, softmax=False)
 			loss = F.softmax_cross_entropy(output, c1)
 			sum_loss += loss
