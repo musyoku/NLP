@@ -22,7 +22,7 @@ for epoch in xrange(n_epoch):
 		data = dataset[k]
 		sum_loss += lm.learn(data)
 	elapsed_time = time.time() - start_time
-	print "epoch:", epoch, "loss:", sum_loss / float(n_train), "time:", elapsed_time / 60, "min", "total_time:", elapsed_time / 60, "min"
 	total_time += elapsed_time
+	print "epoch:", epoch, "loss:", sum_loss / float(n_train), "time:", int(elapsed_time / 60), "min", "total_time:", int(total_time / 60), "min"
 	lm.save(model_dir)
 
