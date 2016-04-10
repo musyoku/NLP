@@ -3,6 +3,7 @@ import os, sys, time, codecs
 import numpy as np
 import model
 import vocab
+from config import config
 
 # Windowsでprintする用
 sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharrefreplace")

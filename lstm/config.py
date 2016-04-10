@@ -31,7 +31,7 @@ class Config:
 	def check(self):
 		if len(self.lstm_units) < 2:
 			raise Exception("You need to add one or more hidden layers to LSTM network.")
-		if len(self.fc_units) < 2:
+		if len(self.fc_units) < 1:
 			raise Exception("You need to add one or more hidden layers to fully-connected network.")
 
 config = Config()

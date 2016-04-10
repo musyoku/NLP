@@ -12,10 +12,10 @@ lm.load(model_dir)
 
 n_epoch = 1000
 n_train = 5000
-batchsize = 32
+batchsize = 64
 total_time = 0
 max_length_of_data = 100
-length_limit = 10
+length_limit = 15
 
 for epoch in xrange(n_epoch):
 	start_time = time.time()
@@ -37,11 +37,14 @@ for epoch in xrange(n_epoch):
 			batch[i,:len(data)] = data
 		lm.reset_state()
 		sum_loss += lm.learn(batch)
-		if t % 100 == 0:
-		    sys.stdout.write("\r%d/%d" % (t, n_train))
-		    sys.stdout.flush()
+		if t % 10 == 0:
+			sys.stdout.write("\rLearning in progress...(%d / %d)" % (t, n_train))
+			sys.stdout.flush()
 	elapsed_time = time.time() - start_time
 	total_time += elapsed_time
+	sys.stdout.write("\r")
 	print "epoch:", epoch, "loss:", sum_loss / float(n_train), "time:", int(elapsed_time / 60), "min", "total_time:", int(total_time / 60), "min", "length_limit:", length_limit
-	# lm.save(model_dir)
-	length_limit = (length_limit + 5) if length_limit < max_length_of_data else max_length_of_data
+	sys.stdout.flush()
+	lm.save(model_dir)
+	if epoch % 10 == 0 and epoch != 0:
+		length_limit = (length_limit + 5) if length_limit < max_length_of_data else max_length_of_data
