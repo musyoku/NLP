@@ -12,7 +12,7 @@ def load(dir):
 	dataset = []
 	vocab["<eos>"] = 0
 	for fn in fs:
-		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")
+		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
 		for line in unko:
 			line = line.replace("\n", "")
 			data = np.empty((len(line) + 1,), dtype=np.int32)

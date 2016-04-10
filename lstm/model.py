@@ -136,9 +136,9 @@ class Model:
 		sum_loss = 0
 		seq_batch = seq_batch.T
 		for c0, c1 in zip(seq_batch[:-1], seq_batch[1:]):
-			c0[c0 == -1.0] = 0.0
-			c0 = Variable(xp.asarray(c0, dtype=np.int32))
-			c1 = Variable(xp.asarray(c1, dtype=np.int32))
+			c0[c0 == -1] = 0
+			c0 = Variable(xp.asanyarray(c0, dtype=np.int32))
+			c1 = Variable(xp.asanyarray(c1, dtype=np.int32))
 			output = self(c0, test=test, softmax=False)
 			loss = F.softmax_cross_entropy(output, c1)
 			sum_loss += loss
