@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os, time
 import numpy as np
 import chainer
 from chainer import cuda, Variable, optimizers, serializers, function, link
@@ -13,13 +14,18 @@ class LSTM(chainer.Chain):
 	def __init__(self, **layers):
 		super(LSTM, self).__init__(**layers)
 		self.n_layers = 0
-		self.activation_function = "elu"
+		self.activation_function = None
 		self.apply_dropout = False
 		self.apply_batchnorm = False
 		self.apply_batchnorm_to_input = False
 
 	def forward_one_step(self, x, test):
-		f = activations[self.activation_function]
+		def pass_through(x):
+			return x
+		if self.activation_function is None:
+			f = pass_through
+		else:
+			f = activations[self.activation_function]
 		chain = [x]
 		embed = self.embed_id(chain[-1])
 		chain.append(embed)
@@ -113,13 +119,21 @@ class Model:
 		ids = xp.argmax(output.data, axis=1)
 		return ids
 
+	def distribution(self, word, gpu=True, test=True):
+		xp = cuda.cupy if gpu else np
+		c0 = Variable(xp.asarray([word], dtype=np.int32))
+		output = self(c0, test=test, softmax=True)
+		if gpu:
+			output.to_cpu()
+		return output.data
+
 	def learn(self, seq, gpu=True, test=False):
 		xp = cuda.cupy if gpu else np
 		sum_loss = 0
 		for c0, c1 in zip(seq[:-1], seq[1:]):
 			c0 = Variable(xp.asarray([c0], dtype=np.int32))
 			c1 = Variable(xp.asarray([c1], dtype=np.int32))
-			output = self(c0, test=test)
+			output = self(c0, test=test, softmax=False)
 			loss = F.softmax_cross_entropy(output, c1)
 			sum_loss += loss
 		self.optimizer_lstm.zero_grads()
@@ -128,6 +142,41 @@ class Model:
 		self.optimizer_lstm.update()
 		self.optimizer_fc.update()
 		return sum_loss.data
+
+	def load(self, dir=None, name="lstm"):
+		if dir is None:
+			raise Exception()
+		filename = dir + "/%s_fc.model" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.fc)
+			print filename, "loaded."
+		filename = dir + "/%s_lstm.model" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.lstm)
+			print filename, "loaded."
+		filename = dir + "/%s_fc.optimizer" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.optimizer_fc)
+			print filename, "loaded."
+		filename = dir + "/%s_lstm.optimizer" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.optimizer_lstm)
+			print filename, "loaded."
+
+	def save(self, dir=None, name="lstm"):
+		if dir is None:
+			raise Exception()
+		try:
+			os.mkdir(dir)
+		except:
+			pass
+		serializers.save_hdf5(dir + "/%s_fc.model" % name, self.fc)
+		serializers.save_hdf5(dir + "/%s_lstm.model" % name, self.lstm)
+		print "model saved."
+		serializers.save_hdf5(dir + "/%s_fc.optimizer" % name, self.optimizer_fc)
+		serializers.save_hdf5(dir + "/%s_lstm.optimizer" % name, self.optimizer_lstm)
+		print "optimizer saved."
+
 
 def build(n_vocab=0):
 	config.check()
@@ -144,7 +193,7 @@ def build(n_vocab=0):
 	lstm = LSTM(**lstm_attributes)
 	lstm.n_layers = len(lstm_units)
 	lstm.activation_function = config.lstm_activation_function
-	lstm.apply_batchnorm = config.apply_batchnorm
+	lstm.apply_batchnorm = config.lstm_apply_batchnorm
 	lstm.apply_batchnorm_to_input = config.lstm_apply_batchnorm_to_input
 	lstm.apply_dropout = config.lstm_apply_dropout
 	if config.use_gpu:
@@ -163,7 +212,7 @@ def build(n_vocab=0):
 	fc.activation_function = config.fc_activation_function
 	fc.apply_batchnorm_to_input = config.fc_apply_batchnorm_to_input
 	fc.apply_batchnorm_to_output = config.fc_apply_batchnorm_to_output
-	fc.apply_batchnorm = config.apply_batchnorm
+	fc.apply_batchnorm = config.fc_apply_batchnorm
 	fc.apply_dropout = config.fc_apply_dropout
 	if config.use_gpu:
 		fc.to_gpu()
