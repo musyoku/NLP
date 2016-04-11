@@ -18,7 +18,6 @@ class Config:
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_batchnorm_to_input = False
 		self.lstm_apply_dropout = False
-		self.lstm_activation_function = None
 
 		# LSTM出力をIDに変換する全結合層の各ユニット数 
 		## 出力であるソフトマックス層は自動的に挿入されます

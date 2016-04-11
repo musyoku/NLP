@@ -20,12 +20,6 @@ class LSTM(chainer.Chain):
 		self.apply_batchnorm_to_input = False
 
 	def forward_one_step(self, x, test):
-		def pass_through(x):
-			return x
-		if self.activation_function is None:
-			f = pass_through
-		else:
-			f = activations[self.activation_function]
 		chain = [x]
 		embed = self.embed_id(chain[-1])
 		chain.append(embed)
@@ -38,7 +32,7 @@ class LSTM(chainer.Chain):
 					pass
 				else:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
-			output = f(u)
+			output = u
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
 			chain.append(output)
@@ -198,7 +192,6 @@ def build(n_vocab=0):
 
 	lstm = LSTM(**lstm_attributes)
 	lstm.n_layers = len(lstm_units)
-	lstm.activation_function = config.lstm_activation_function
 	lstm.apply_batchnorm = config.lstm_apply_batchnorm
 	lstm.apply_batchnorm_to_input = config.lstm_apply_batchnorm_to_input
 	lstm.apply_dropout = config.lstm_apply_dropout
