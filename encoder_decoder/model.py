@@ -102,8 +102,9 @@ class Model:
 		self.optimizer_decoder_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_decoder_fc.setup(self.decoder_fc)
 		self.optimizer_decoder_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
-	# Inputs: Numpy / CuPy
-	# Returns: Variable
+
+	# Inputs:	Numpy / CuPy
+	# Returns:	Variable
 	def encode(self, x_seq, test=False):
 		self.encoder_lstm.reset_state()
 		for i, x in enumerate(x_seq):
@@ -111,16 +112,38 @@ class Model:
 			output = self.encoder_lstm(x, test=test)
 		return output
 
-	# Inputs: Variable
-	# Output: Distribution of word IDs
-	# Note: decoderのLSTMの内部状態は適当にリセットしておいてください
+	# Inputs:	Variable, Variable
+	# Returns:	Confidence of each word ID
+	# Note:		decoderのLSTMの内部状態は適当にリセットしておいてください
 	def decode_one_step(self, summary, prev_y, test=False, softmax=True):
-		summary = Variable(summary)
-		output = self.lstm(x, test=test)
-		output = self.fc(output, test=test)
+		input = append_variable(summary, prev_y)
+		h = self.decoder_lstm(input, test=test)
+		output = self.fc(h, test=test)
 		if softmax:
 			output = F.softmax(output)
 		return output
+
+	# Inputs:	Numpy / CuPy
+	# Outputs:	Numpy / CuPy
+	# Note:		sampling_yがTrueだと出力されるIDはsoftmax出力からサンプリングします。
+	#			そうでない場合は確信度が最も高いものを取ります。（訓練データを再生するだけの意味のないものになるかもしれません）
+	def decode(self, x_seq, test=False, limit=1000, sampling_y=True):
+		xp = self.xp
+		n_batch = x_seq.shape[0]
+		summary = self.encode(x_seq, test=test)
+		y_seq = xp.zeros((n_batch, 1), dtype=xp.uint8)
+		ids = xp.arange(config.n_vocab, dtype=np.uint8)
+
+		prev_y = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.int32))
+		for t in xrange(limit):
+			if sampling_y:
+				distribution = self.decode_one_step(summary, prev_y, test=test, softmax=True)
+				y = xp.random.choice(ids, 1, p=distribution.data)
+			else:
+				confidence = self.decode_one_step(summary, prev_y, test=test)
+				y = xp.argmax(confidence.data, axis=1)
+			y_seq.append(y)
+			prev_y = Variable(y)
 
 	@property
 	def xp(self):
@@ -243,30 +266,27 @@ class Append(function.Function):
 	def check_type_forward(self, in_types):
 		n_in = in_types.size()
 		type_check.expect(n_in == 2)
-		summary_type, prev_y_type, prev_h_type = in_types
+		summary_type, prev_y_type = in_types
 
 		type_check.expect(
 			summary_type.dtype == np.float32,
 			prev_y_type.dtype == np.float32,
-			prev_h_type.dtype == np.float32,
 			summary_type.ndim == 2,
 			prev_y_type.ndim == 2,
-			prev_h_type.ndim == 2,
 		)
 
 	def forward(self, inputs):
 		xp = cuda.get_array_module(inputs[0])
-		summary, prev_y, prev_h = inputs
+		summary, prev_y = inputs
 		n_batch = summary.shape[0]
-		output = xp.empty((n_batch, summary.shape[1] + prev_y.shape[1] + prev_h.shape[1]), dtype=xp.float32)
+		output = xp.empty((n_batch, summary.shape[1] + prev_y.shape[1]), dtype=xp.float32)
 		output[:,:summary.shape[1]] = summary
-		output[:,summary.shape[1]:prev_y.shape[1]] = prev_y
-		output[:,-prev_h.shape[1]:] = prev_h
+		output[:,summary.shape[1]:] = prev_y
 		return output,
 
 	def backward(self, inputs, grad_outputs):
-		summary, prev_y, prev_h = inputs
-		return grad_outputs[0][:,:summary.shape[1]], grad_outputs[0][:,summary.shape[1]:prev_y.shape[1]], grad_outputs[0][:,-prev_h.shape[1]:]
+		summary, prev_y = inputs
+		return grad_outputs[0][:,:summary.shape[1]], grad_outputs[0][:,summary.shape[1]:]
 
-def append_variable(summary, prev_y, prev_h):
-	return Adder()(summary, prev_y, prev_h)
+def append_variable(summary, prev_y):
+	return Adder()(summary, prev_y)

@@ -122,11 +122,11 @@ class Model:
 		ids = xp.argmax(output.data, axis=1)
 		return ids
 
-	def distribution(self, word, gpu=True, test=True):
+	def distribution(self, word, test=True):
 		xp = self.xp
 		c0 = Variable(xp.asarray([word], dtype=np.int32))
 		output = self(c0, test=test, softmax=True)
-		if gpu:
+		if xp is cuda.cupy:
 			output.to_cpu()
 		return output.data
 
