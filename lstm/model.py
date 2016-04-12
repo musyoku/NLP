@@ -26,12 +26,14 @@ class LSTM(chainer.Chain):
 
 		# Hidden layers
 		for i in range(self.n_layers):
-			u = getattr(self, "layer_%i" % i)(chain[-1])
-			if self.apply_batchnorm:
-				if i == 0 and self.apply_batchnorm_to_input is False:
-					pass
-				else:
+			u = chain[-1]
+			if i == 0:
+				if self.apply_batchnorm_to_input:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			else:
+				if self.apply_batchnorm:
+					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			u = getattr(self, "layer_%i" % i)(u)
 			output = u
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
@@ -62,21 +64,24 @@ class FullyConnectedNetwork(chainer.Chain):
 
 		# Hidden layers
 		for i in range(self.n_hidden_layers):
-			u = getattr(self, "layer_%i" % i)(chain[-1])
-			if self.apply_batchnorm:
-				if i == 0 and self.apply_batchnorm_to_input is False:
-					pass
-				else:
+			u = chain[-1]
+			if i == 0:
+				if self.apply_batchnorm_to_input:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			else:
+				if self.apply_batchnorm:
+					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			u = getattr(self, "layer_%i" % i)(u)
 			output = f(u)
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
 			chain.append(output)
 
 		# Output
-		u = getattr(self, "layer_%i" % self.n_hidden_layers)(chain[-1])
+		u = chain[-1]
 		if self.apply_batchnorm_to_output:
 			u = getattr(self, "batchnorm_%i" % self.n_hidden_layers)(u, test=test)
+		u = getattr(self, "layer_%i" % self.n_hidden_layers)(u)
 		chain.append(f(u))
 
 		return chain[-1]
@@ -126,6 +131,7 @@ class Model:
 		return output.data
 
 	def learn(self, seq_batch, gpu=True, test=False):
+		self.reset_state()
 		xp = self.xp
 		sum_loss = 0
 		seq_batch = seq_batch.T
@@ -187,7 +193,7 @@ def build():
 
 	for i, (n_in, n_out) in enumerate(lstm_units):
 		lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
-		lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
+		lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
 	lstm_attributes["embed_id"] = L.EmbedID(config.n_vocab, config.lstm_units[0])
 
 	lstm = LSTM(**lstm_attributes)
@@ -204,7 +210,7 @@ def build():
 
 	for i, (n_in, n_out) in enumerate(fc_units):
 		fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-		fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
+		fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
 
 	fc = FullyConnectedNetwork(**fc_attributes)
 	fc.n_hidden_layers = len(fc_units) - 1

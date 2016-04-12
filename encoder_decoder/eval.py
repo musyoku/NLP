@@ -10,18 +10,18 @@ sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharre
 
 data_dir = "text"
 model_dir = "model"
-dataset, n_vocab, n_dataset = vocab.load(data_dir)
-lm = model.build(n_vocab)
+dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
+lm = model.build()
 lm.load(model_dir)
 
 for phrase in xrange(50):
 	lm.reset_state()
 	str = ""
-	char = dataset[np.random.randint(0, n_dataset)][0]
+	char = dataset[np.random.randint(0, config.n_dataset)][0]
 	for n in xrange(1000):
 		str += vocab.id_to_word(char)
 		dist = lm.distribution(char, test=True)[0]
-		id = np.random.choice(np.arange(n_vocab, dtype=np.uint8), 1, p=dist)[0]
+		id = np.random.choice(np.arange(config.n_vocab, dtype=np.uint8), 1, p=dist)[0]
 		if id == 0:
 			break
 		char = id

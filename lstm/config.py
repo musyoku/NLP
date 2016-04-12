@@ -16,18 +16,18 @@ class Config:
 		# 各LSTMレイヤのユニット数を入力側から出力側に向かって並べる
 		## e.g 500(input vector)->250->100(output vector)
 		## self.q_fc_units = [500, 250, 100]
-		self.lstm_units = [self.embed_size, 1024]
+		self.lstm_units = [self.embed_size, 512]
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_batchnorm_to_input = False
 		self.lstm_apply_dropout = False
 
 		# LSTM出力をIDに変換する全結合層の各ユニット数 
 		## 出力であるソフトマックス層は自動的に挿入されます
-		self.fc_units = [self.lstm_units[-1], 4096, 4096]
+		self.fc_units = [self.lstm_units[-1], 768, 1024]
 		
 		# Batch Normalizationはあまり効果がない？
-		self.fc_apply_batchnorm = False
-		self.fc_apply_batchnorm_to_input = False
+		self.fc_apply_batchnorm = True
+		self.fc_apply_batchnorm_to_input = True
 		self.fc_apply_batchnorm_to_output = False
 		self.fc_apply_dropout = False
 		self.fc_activation_function = "elu"

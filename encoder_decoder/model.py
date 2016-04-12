@@ -27,11 +27,12 @@ class LSTM(chainer.Chain):
 		# Hidden layers
 		for i in range(self.n_layers):
 			u = getattr(self, "layer_%i" % i)(chain[-1])
-			if self.apply_batchnorm:
-				if i == 0 and self.apply_batchnorm_to_input is False:
-					pass
-				else:
+			if i == 0:
+				if self.apply_batchnorm_to_input:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			else:
+				if self.apply_batchnorm:
+						u = getattr(self, "batchnorm_%i" % i)(u, test=test)
 			output = u
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
@@ -63,10 +64,11 @@ class FullyConnectedNetwork(chainer.Chain):
 		# Hidden layers
 		for i in range(self.n_hidden_layers):
 			u = getattr(self, "layer_%i" % i)(chain[-1])
-			if self.apply_batchnorm:
-				if i == 0 and self.apply_batchnorm_to_input is False:
-					pass
-				else:
+			if i == 0:
+				if self.apply_batchnorm_to_input:
+					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			else:
+				if self.apply_batchnorm:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
 			output = f(u)
 			if self.apply_dropout:
@@ -85,30 +87,39 @@ class FullyConnectedNetwork(chainer.Chain):
 		return self.forward_one_step(x, test=test)
 
 class Model:
-	def __init__(self, lstm, fc):
-		self.lstm = lstm
-		self.optimizer_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
-		self.optimizer_lstm.setup(self.lstm)
-		self.optimizer_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
+	def __init__(self, encoder_lstm, decoder_lstm, decoder_fc):
+		self.encoder_lstm = encoder_lstm
+		self.optimizer_encoder_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_encoder_lstm.setup(self.encoder_lstm)
+		self.optimizer_encoder_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
 
-		self.fc = fc
-		self.optimizer_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
-		self.optimizer_fc.setup(self.fc)
-		self.optimizer_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.decoder_lstm = decoder_lstm
+		self.optimizer_decoder_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_decoder_lstm.setup(self.decoder_lstm)
+		self.optimizer_decoder_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
 
-	def __call__(self, x, test=False, softmax=True):
-		output = self.lstm(x, test=test)
-		output = self.fc(output, test=test)
+		self.decoder_fc = decoder_fc
+		self.optimizer_decoder_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_decoder_fc.setup(self.decoder_fc)
+		self.optimizer_decoder_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+
+	def __call__(self, x_seq, test=False, softmax=True, reset=True):
+		if reset:
+			self.encoder_lstm.reset_state()
+			self.decoder_lstm.reset_state()
+		
+		output = self.encoder_lstm(x, test=test)
+		output = self.decoder_fc(output, test=test)
 		if softmax:
 			output = F.softmax(output)
 		return output
 
 	@property
 	def xp(self):
-		return np if self.lstm.layer_0._cpu else cuda.cupy
+		return np if self.encoder_lstm.layer_0._cpu else cuda.cupy
 
 	def reset_state(self):
-		self.lstm.reset_state()
+		self.encoder_lstm.reset_state()
 
 	def predict(self, word, gpu=True, test=True):
 		xp = self.xp
@@ -136,45 +147,45 @@ class Model:
 			output = self(c0, test=test, softmax=False)
 			loss = F.softmax_cross_entropy(output, c1)
 			sum_loss += loss
-		self.optimizer_lstm.zero_grads()
-		self.optimizer_fc.zero_grads()
+		self.optimizer_encoder_lstm.zero_grads()
+		self.optimizer_decoder_fc.zero_grads()
 		sum_loss.backward()
-		self.optimizer_lstm.update()
-		self.optimizer_fc.update()
+		self.optimizer_encoder_lstm.update()
+		self.optimizer_decoder_fc.update()
 		return sum_loss.data
 
-	def load(self, dir=None, name="lstm"):
+	def load(self, dir=None, name="encoder_lstm"):
 		if dir is None:
 			raise Exception()
 		filename = dir + "/%s_fc.model" % name
 		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.fc)
+			serializers.load_hdf5(filename, self.decoder_fc)
 			print filename, "loaded."
 		filename = dir + "/%s_lstm.model" % name
 		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.lstm)
+			serializers.load_hdf5(filename, self.encoder_lstm)
 			print filename, "loaded."
 		filename = dir + "/%s_fc.optimizer" % name
 		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.optimizer_fc)
+			serializers.load_hdf5(filename, self.optimizer_decoder_fc)
 			print filename, "loaded."
 		filename = dir + "/%s_lstm.optimizer" % name
 		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.optimizer_lstm)
+			serializers.load_hdf5(filename, self.optimizer_encoder_lstm)
 			print filename, "loaded."
 
-	def save(self, dir=None, name="lstm"):
+	def save(self, dir=None, name="encoder_lstm"):
 		if dir is None:
 			raise Exception()
 		try:
 			os.mkdir(dir)
 		except:
 			pass
-		serializers.save_hdf5(dir + "/%s_fc.model" % name, self.fc)
-		serializers.save_hdf5(dir + "/%s_lstm.model" % name, self.lstm)
+		serializers.save_hdf5(dir + "/%s_fc.model" % name, self.decoder_fc)
+		serializers.save_hdf5(dir + "/%s_lstm.model" % name, self.encoder_lstm)
 		print "model saved."
-		serializers.save_hdf5(dir + "/%s_fc.optimizer" % name, self.optimizer_fc)
-		serializers.save_hdf5(dir + "/%s_lstm.optimizer" % name, self.optimizer_lstm)
+		serializers.save_hdf5(dir + "/%s_fc.optimizer" % name, self.optimizer_decoder_fc)
+		serializers.save_hdf5(dir + "/%s_lstm.optimizer" % name, self.optimizer_encoder_lstm)
 		print "optimizer saved."
 
 

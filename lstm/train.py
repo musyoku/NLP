@@ -12,7 +12,7 @@ lm = model.build()
 lm.load(model_dir)
 
 n_epoch = 1000
-n_train = 5000
+n_train = 500
 batchsize = 32
 total_time = 0
 
@@ -41,8 +41,7 @@ for epoch in xrange(n_epoch):
 		batch = np.full((batchsize, max_length_in_batch), -1.0, dtype=np.float32)
 		for i, data in enumerate(batch_array):
 			batch[i,:len(data)] = data
-		lm.reset_state()
-		sum_loss += lm.learn(batch)
+		sum_loss += lm.learn(batch, reset=True)
 		if t % 10 == 0:
 			sys.stdout.write("\rLearning in progress...(%d / %d)" % (t, n_train))
 			sys.stdout.flush()
