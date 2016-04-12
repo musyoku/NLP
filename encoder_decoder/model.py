@@ -178,7 +178,7 @@ class Model:
 		print "optimizer saved."
 
 
-def build():
+def build(n_vocab=0):
 	config.check()
 	wscale = 1.0
 
@@ -188,7 +188,7 @@ def build():
 	for i, (n_in, n_out) in enumerate(lstm_units):
 		lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 		lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
-	lstm_attributes["embed_id"] = L.EmbedID(config.n_vocab, config.lstm_units[0])
+	lstm_attributes["embed_id"] = L.EmbedID(n_vocab, config.lstm_units[0])
 
 	lstm = LSTM(**lstm_attributes)
 	lstm.n_layers = len(lstm_units)
@@ -200,7 +200,7 @@ def build():
 
 	fc_attributes = {}
 	fc_units = zip(config.fc_units[:-1], config.fc_units[1:])
-	fc_units += [(config.fc_units[-1], config.n_vocab)]
+	fc_units += [(config.fc_units[-1], n_vocab)]
 
 	for i, (n_in, n_out) in enumerate(fc_units):
 		fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
@@ -217,3 +217,35 @@ def build():
 		fc.to_gpu()
 
 	return Model(lstm, fc)
+
+class Append(function.Function):
+	def check_type_forward(self, in_types):
+		n_in = in_types.size()
+		type_check.expect(n_in == 2)
+		summary_type, prev_y_type, prev_h_type = in_types
+
+		type_check.expect(
+			summary_type.dtype == np.float32,
+			prev_y_type.dtype == np.float32,
+			prev_h_type.dtype == np.float32,
+			summary_type.ndim == 2,
+			prev_y_type.ndim == 2,
+			prev_h_type.ndim == 2,
+		)
+
+	def forward(self, inputs):
+		xp = cuda.get_array_module(inputs[0])
+		summary, prev_y, prev_h = inputs
+		n_batch = summary.shape[0]
+		output = xp.empty((n_batch, summary.shape[1] + prev_y.shape[1] + prev_h.shape[1]), dtype=xp.float32)
+		output[:,:summary.shape[1]] = summary
+		output[:,summary.shape[1]:prev_y.shape[1]] = prev_y
+		output[:,-prev_h.shape[1]:] = prev_h
+		return output,
+
+	def backward(self, inputs, grad_outputs):
+		summary, prev_y, prev_h = inputs
+		return grad_outputs[0][:,:summary.shape[1]], grad_outputs[0][:,summary.shape[1]:prev_y.shape[1]], grad_outputs[0][:,-prev_h.shape[1]:]
+
+def append_variable(summary, prev_y, prev_h):
+	return Adder()(summary, prev_y, prev_h)

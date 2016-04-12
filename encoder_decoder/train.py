@@ -3,12 +3,11 @@ import os, sys, time
 import numpy as np
 import model
 import vocab
-from config import config
 
 data_dir = "text"
 model_dir = "model"
-dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
-lm = model.build()
+dataset, n_vocab, n_dataset = vocab.load(data_dir)
+lm = model.build(n_vocab)
 lm.load(model_dir)
 
 n_epoch = 1000
@@ -32,7 +31,7 @@ for epoch in xrange(n_epoch):
 		for b in xrange(batchsize):
 			length = current_length_limit + 1
 			while length > current_length_limit:
-				k = np.random.randint(0, config.n_dataset)
+				k = np.random.randint(0, n_dataset)
 				data = dataset[k]
 				length = len(data)
 			batch_array.append(data)

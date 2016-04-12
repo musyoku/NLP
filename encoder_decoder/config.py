@@ -4,8 +4,6 @@ from activations import activations
 
 class Config:
 	def __init__(self):
-		self.n_vocab = -1
-		self.n_dataset = -1
 		self.use_gpu = True
 		self.learning_rate = 0.00025
 		self.gradient_momentum = 0.95
