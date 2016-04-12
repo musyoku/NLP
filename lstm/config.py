@@ -25,9 +25,8 @@ class Config:
 		## 出力であるソフトマックス層は自動的に挿入されます
 		self.fc_units = [self.lstm_units[-1], 768, 1024]
 		
-		# Batch Normalizationはあまり効果がない？
-		self.fc_apply_batchnorm = True
-		self.fc_apply_batchnorm_to_input = True
+		self.fc_apply_batchnorm = False
+		self.fc_apply_batchnorm_to_input = False
 		self.fc_apply_batchnorm_to_output = False
 		self.fc_apply_dropout = False
 		self.fc_activation_function = "elu"

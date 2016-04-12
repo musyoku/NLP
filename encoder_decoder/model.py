@@ -102,14 +102,22 @@ class Model:
 		self.optimizer_decoder_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_decoder_fc.setup(self.decoder_fc)
 		self.optimizer_decoder_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+	# Inputs: Numpy / CuPy
+	# Returns: Variable
+	def encode(self, x_seq, test=False):
+		self.encoder_lstm.reset_state()
+		for i, x in enumerate(x_seq):
+			x = Variable(x)
+			output = self.encoder_lstm(x, test=test)
+		return output
 
-	def __call__(self, x_seq, test=False, softmax=True, reset=True):
-		if reset:
-			self.encoder_lstm.reset_state()
-			self.decoder_lstm.reset_state()
-		
-		output = self.encoder_lstm(x, test=test)
-		output = self.decoder_fc(output, test=test)
+	# Inputs: Variable
+	# Output: Distribution of word IDs
+	# Note: decoderのLSTMの内部状態は適当にリセットしておいてください
+	def decode_one_step(self, summary, prev_y, test=False, softmax=True):
+		summary = Variable(summary)
+		output = self.lstm(x, test=test)
+		output = self.fc(output, test=test)
 		if softmax:
 			output = F.softmax(output)
 		return output
@@ -137,6 +145,8 @@ class Model:
 		return output.data
 
 	def learn(self, seq_batch, gpu=True, test=False):
+		self.encoder_lstm.reset_state()
+		self.decoder_lstm.reset_state()
 		xp = self.xp
 		sum_loss = 0
 		seq_batch = seq_batch.T
