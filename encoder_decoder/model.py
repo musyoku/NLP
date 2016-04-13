@@ -21,19 +21,17 @@ class LSTM(chainer.Chain):
 
 	def forward_one_step(self, x, test):
 		chain = [x]
-		embed = self.embed_id(chain[-1])
-		chain.append(embed)
 
 		# Hidden layers
 		for i in range(self.n_layers):
-			u = getattr(self, "layer_%i" % i)(chain[-1])
+			u = chain[-1]
 			if i == 0:
 				if self.apply_batchnorm_to_input:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
 			else:
 				if self.apply_batchnorm:
-						u = getattr(self, "batchnorm_%i" % i)(u, test=test)
-			output = u
+					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			output = getattr(self, "layer_%i" % i)(u)
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
 			chain.append(output)
@@ -63,22 +61,24 @@ class FullyConnectedNetwork(chainer.Chain):
 
 		# Hidden layers
 		for i in range(self.n_hidden_layers):
-			u = getattr(self, "layer_%i" % i)(chain[-1])
+			u = chain[-1]
 			if i == 0:
 				if self.apply_batchnorm_to_input:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
 			else:
 				if self.apply_batchnorm:
 					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
+			u = getattr(self, "layer_%i" % i)(u)
 			output = f(u)
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
 			chain.append(output)
 
 		# Output
-		u = getattr(self, "layer_%i" % self.n_hidden_layers)(chain[-1])
+		u = chain[-1]
 		if self.apply_batchnorm_to_output:
 			u = getattr(self, "batchnorm_%i" % self.n_hidden_layers)(u, test=test)
+		u = getattr(self, "layer_%i" % self.n_hidden_layers)(u)
 		chain.append(f(u))
 
 		return chain[-1]
@@ -87,7 +87,9 @@ class FullyConnectedNetwork(chainer.Chain):
 		return self.forward_one_step(x, test=test)
 
 class Model:
-	def __init__(self, encoder_lstm, decoder_lstm, decoder_fc):
+	def __init__(self, encoder_embed, encoder_lstm, decoder_lstm, decoder_fc):
+		self.encoder_embed = encoder_embed
+
 		self.encoder_lstm = encoder_lstm
 		self.optimizer_encoder_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_encoder_lstm.setup(self.encoder_lstm)
@@ -105,11 +107,15 @@ class Model:
 
 	# Inputs:	Numpy / CuPy
 	# Returns:	Variable
-	def encode(self, x_seq, test=False):
+	def encode(self, x_seq_batch, test=False):
 		self.encoder_lstm.reset_state()
-		for i, x in enumerate(x_seq):
-			x = Variable(x)
-			output = self.encoder_lstm(x, test=test)
+		xp = self.xp
+		x_seq_batch = x_seq_batch.T
+		for i, cur_x in enumerate(x_seq_batch):
+			cur_x[cur_x == -1] = 0
+			cur_x = Variable(xp.asanyarray(cur_x, dtype=np.int32))
+			embed = self.encoder_embed(cur_x)
+			output = self.encoder_lstm(embed, test=test)
 		return output
 
 	# Inputs:	Variable, Variable
@@ -118,7 +124,7 @@ class Model:
 	def decode_one_step(self, summary, prev_y, test=False, softmax=True):
 		input = append_variable(summary, prev_y)
 		h = self.decoder_lstm(input, test=test)
-		output = self.fc(h, test=test)
+		output = self.decoder_fc(h, test=test)
 		if softmax:
 			output = F.softmax(output)
 		return output
@@ -133,7 +139,6 @@ class Model:
 		summary = self.encode(x_seq, test=test)
 		y_seq = xp.zeros((n_batch, 1), dtype=xp.uint8)
 		ids = xp.arange(config.n_vocab, dtype=np.uint8)
-
 		prev_y = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.int32))
 		for t in xrange(limit):
 			if sampling_y:
@@ -143,7 +148,9 @@ class Model:
 				confidence = self.decode_one_step(summary, prev_y, test=test)
 				y = xp.argmax(confidence.data, axis=1)
 			y_seq.append(y)
-			prev_y = Variable(y)
+			prev_y = xp.zeros((n_batch, config.n_vocab), dtype=xp.int32)
+			prev_y[y] = 1
+			prev_y = Variable(prev_y)
 
 	@property
 	def xp(self):
@@ -167,23 +174,31 @@ class Model:
 			output.to_cpu()
 		return output.data
 
-	def learn(self, seq_batch, gpu=True, test=False):
+	def learn(self, source_seq_batch, target_seq_batch, test=False):
 		self.encoder_lstm.reset_state()
 		self.decoder_lstm.reset_state()
 		xp = self.xp
+		n_batch = source_seq_batch.shape[0]
 		sum_loss = 0
-		seq_batch = seq_batch.T
-		for c0, c1 in zip(seq_batch[:-1], seq_batch[1:]):
-			c0[c0 == -1] = 0
-			c0 = Variable(xp.asanyarray(c0, dtype=np.int32))
-			c1 = Variable(xp.asanyarray(c1, dtype=np.int32))
-			output = self(c0, test=test, softmax=False)
-			loss = F.softmax_cross_entropy(output, c1)
+		summary = self.encode(source_seq_batch, test=test)
+		target_seq_batch = target_seq_batch.T
+		prev_y_onehot = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.int32))
+		for i, target_y_ids in enumerate(target_seq_batch):
+			# EmbedIDの-1問題を回避
+			target_y_ids[target_y_ids == -1] = 0
+			target_y_onehot = xp.zeros(prev_y_onehot.data.shape, dtype=xp.float32)
+			target_y_onehot[target_y_ids.astype(xp.int32)] = 1
+			target_y_onehot = Variable(xp.asanyarray(target_y_onehot, dtype=np.int32))
+			confidence_y = self.decode_one_step(summary, prev_y_onehot, test=test, softmax=False)
+			loss = F.softmax_cross_entropy(confidence_y, target_y_ids)
 			sum_loss += loss
+			prev_y_onehot = target_y_onehot
 		self.optimizer_encoder_lstm.zero_grads()
+		self.optimizer_decoder_lstm.zero_grads()
 		self.optimizer_decoder_fc.zero_grads()
 		sum_loss.backward()
 		self.optimizer_encoder_lstm.update()
+		self.optimizer_decoder_lstm.update()
 		self.optimizer_decoder_fc.update()
 		return sum_loss.data
 
@@ -222,45 +237,61 @@ class Model:
 		print "optimizer saved."
 
 
-def build(n_vocab=0):
+def build():
 	config.check()
 	wscale = 1.0
 
-	lstm_attributes = {}
-	lstm_units = zip(config.lstm_units[:-1], config.lstm_units[1:])
+	enc_lstm_attributes = {}
+	enc_lstm_units = zip(config.enc_lstm_units[:-1], config.enc_lstm_units[1:])
 
-	for i, (n_in, n_out) in enumerate(lstm_units):
-		lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
-		lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
-	lstm_attributes["embed_id"] = L.EmbedID(n_vocab, config.lstm_units[0])
+	for i, (n_in, n_out) in enumerate(enc_lstm_units):
+		enc_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+		enc_lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
 
-	lstm = LSTM(**lstm_attributes)
-	lstm.n_layers = len(lstm_units)
-	lstm.apply_batchnorm = config.lstm_apply_batchnorm
-	lstm.apply_batchnorm_to_input = config.lstm_apply_batchnorm_to_input
-	lstm.apply_dropout = config.lstm_apply_dropout
+	enc_lstm = LSTM(**enc_lstm_attributes)
+	enc_lstm.n_layers = len(enc_lstm_units)
+	enc_lstm.apply_batchnorm = config.enc_lstm_apply_batchnorm
+	enc_lstm.apply_batchnorm_to_input = config.enc_lstm_apply_batchnorm_to_input
+	enc_lstm.apply_dropout = config.enc_lstm_apply_dropout
 	if config.use_gpu:
-		lstm.to_gpu()
+		enc_lstm.to_gpu()
 
-	fc_attributes = {}
-	fc_units = zip(config.fc_units[:-1], config.fc_units[1:])
-	fc_units += [(config.fc_units[-1], n_vocab)]
+	enc_embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
 
-	for i, (n_in, n_out) in enumerate(fc_units):
-		fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-		fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
+	dec_lstm_attributes = {}
+	dec_lstm_units = zip(config.dec_lstm_units[:-1], config.dec_lstm_units[1:])
 
-	fc = FullyConnectedNetwork(**fc_attributes)
-	fc.n_hidden_layers = len(fc_units) - 1
-	fc.activation_function = config.fc_activation_function
-	fc.apply_batchnorm_to_input = config.fc_apply_batchnorm_to_input
-	fc.apply_batchnorm_to_output = config.fc_apply_batchnorm_to_output
-	fc.apply_batchnorm = config.fc_apply_batchnorm
-	fc.apply_dropout = config.fc_apply_dropout
+	for i, (n_in, n_out) in enumerate(dec_lstm_units):
+		dec_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+		dec_lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
+
+	dec_lstm = LSTM(**dec_lstm_attributes)
+	dec_lstm.n_layers = len(dec_lstm_units)
+	dec_lstm.apply_batchnorm = config.dec_lstm_apply_batchnorm
+	dec_lstm.apply_batchnorm_to_input = config.dec_lstm_apply_batchnorm_to_input
+	dec_lstm.apply_dropout = config.dec_lstm_apply_dropout
 	if config.use_gpu:
-		fc.to_gpu()
+		dec_lstm.to_gpu()
 
-	return Model(lstm, fc)
+	dec_fc_attributes = {}
+	dec_fc_units = zip(config.dec_fc_units[:-1], config.dec_fc_units[1:])
+	dec_fc_units += [(config.dec_fc_units[-1], config.n_vocab)]
+
+	for i, (n_in, n_out) in enumerate(dec_fc_units):
+		dec_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+		dec_fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
+
+	dec_fc = FullyConnectedNetwork(**dec_fc_attributes)
+	dec_fc.n_hidden_layers = len(dec_fc_units) - 1
+	dec_fc.activation_function = config.dec_fc_activation_function
+	dec_fc.apply_batchnorm_to_input = config.dec_fc_apply_batchnorm_to_input
+	dec_fc.apply_batchnorm_to_output = config.dec_fc_apply_batchnorm_to_output
+	dec_fc.apply_batchnorm = config.dec_fc_apply_batchnorm
+	dec_fc.apply_dropout = config.dec_fc_apply_dropout
+	if config.use_gpu:
+		dec_fc.to_gpu()
+
+	return Model(enc_embed, enc_lstm, dec_lstm, dec_fc)
 
 class Append(function.Function):
 	def check_type_forward(self, in_types):
@@ -270,7 +301,7 @@ class Append(function.Function):
 
 		type_check.expect(
 			summary_type.dtype == np.float32,
-			prev_y_type.dtype == np.float32,
+			prev_y_type.dtype == np.int32,
 			summary_type.ndim == 2,
 			prev_y_type.ndim == 2,
 		)
@@ -289,4 +320,4 @@ class Append(function.Function):
 		return grad_outputs[0][:,:summary.shape[1]], grad_outputs[0][:,summary.shape[1]:]
 
 def append_variable(summary, prev_y):
-	return Adder()(summary, prev_y)
+	return Append()(summary, prev_y)

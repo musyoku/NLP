@@ -5,7 +5,9 @@ import model
 import vocab
 from config import config
 
-data_dir = "text"
+config.use_gpu = False
+
+data_dir = "debug"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
 lm = model.build()
@@ -13,7 +15,7 @@ lm.load(model_dir)
 
 n_epoch = 1000
 n_train = 5000
-batchsize = 32
+batchsize = 4
 total_time = 0
 
 # 長すぎるデータはメモリに乗らないこともあります
@@ -23,25 +25,31 @@ max_length_of_chars = 100
 # この機能が必要ない場合は最初から大きな値を設定します。
 current_length_limit = 15
 
+def make_batch():
+	source_batch_array = []
+	max_length_in_batch = 0
+	for b in xrange(batchsize):
+		length = current_length_limit + 1
+		while length > current_length_limit:
+			k = np.random.randint(0, config.n_dataset)
+			data = dataset[k]
+			length = len(data)
+		source_batch_array.append(data)
+		if length > max_length_in_batch:
+			max_length_in_batch = length
+	source_batch = np.full((batchsize, max_length_in_batch), -1.0, dtype=np.float32)
+	for i, data in enumerate(source_batch_array):
+		source_batch[i,:len(data)] = data
+	# 翻訳データがないので今回は目標出力を自分自身とする
+	target_batch = np.fliplr(source_batch)
+	return source_batch, target_batch
+
 for epoch in xrange(n_epoch):
 	start_time = time.time()
 	sum_loss = 0
 	for t in xrange(n_train):
-		batch_array = []
-		max_length_in_batch = 0
-		for b in xrange(batchsize):
-			length = current_length_limit + 1
-			while length > current_length_limit:
-				k = np.random.randint(0, config.n_dataset)
-				data = dataset[k]
-				length = len(data)
-			batch_array.append(data)
-			if length > max_length_in_batch:
-				max_length_in_batch = length
-		batch = np.full((batchsize, max_length_in_batch), -1.0, dtype=np.float32)
-		for i, data in enumerate(batch_array):
-			batch[i,:len(data)] = data
-		sum_loss += lm.learn(batch)
+		source_batch, target_batch = make_batch()
+		sum_loss += lm.learn(source_batch, target_batch)
 		if t % 10 == 0:
 			sys.stdout.write("\rLearning in progress...(%d / %d)" % (t, n_train))
 			sys.stdout.flush()
