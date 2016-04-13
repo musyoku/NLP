@@ -135,22 +135,32 @@ class Model:
 	#			そうでない場合は確信度が最も高いものを取ります。（訓練データを再生するだけの意味のないものになるかもしれません）
 	def decode(self, x_seq, test=False, limit=1000, sampling_y=True):
 		xp = self.xp
-		n_batch = x_seq.shape[0]
-		summary = self.encode(x_seq, test=test)
-		y_seq = xp.zeros((n_batch, 1), dtype=xp.uint8)
-		ids = xp.arange(config.n_vocab, dtype=np.uint8)
-		prev_y = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.int32))
+		summary = self.encode(x_seq.reshape(1, -1), test=test)
+		y_seq = None
+		ids = np.arange(config.n_vocab, dtype=np.uint8)
+		prev_y = Variable(xp.zeros((1, config.n_vocab), dtype=xp.float32))
 		for t in xrange(limit):
 			if sampling_y:
 				distribution = self.decode_one_step(summary, prev_y, test=test, softmax=True)
-				y = xp.random.choice(ids, 1, p=distribution.data)
+				if xp is cuda.cupy:
+					distribution.to_cpu()
+				y = np.random.choice(ids, 1, p=distribution.data[0])
 			else:
 				confidence = self.decode_one_step(summary, prev_y, test=test)
-				y = xp.argmax(confidence.data, axis=1)
-			y_seq.append(y)
-			prev_y = xp.zeros((n_batch, config.n_vocab), dtype=xp.int32)
-			prev_y[y] = 1
+				if xp is cuda.cupy:
+					confidence.to_cpu()
+				y = np.argmax(confidence.data[0], axis=1)
+			if y_seq is None:
+				y_seq = y
+			else:
+				y_seq = np.append(y_seq, y)
+			y = y[0]
+			if y == 0:
+				break
+			prev_y = xp.zeros((1, config.n_vocab), dtype=xp.float32)
+			prev_y[0, y] = 1
 			prev_y = Variable(prev_y)
+		return y_seq
 
 	@property
 	def xp(self):
@@ -158,21 +168,6 @@ class Model:
 
 	def reset_state(self):
 		self.encoder_lstm.reset_state()
-
-	def predict(self, word, gpu=True, test=True):
-		xp = self.xp
-		c0 = Variable(xp.asarray([word], dtype=np.int32))
-		output = self(c0, test=test, softmax=False)
-		ids = xp.argmax(output.data, axis=1)
-		return ids
-
-	def distribution(self, word, gpu=True, test=True):
-		xp = self.xp
-		c0 = Variable(xp.asarray([word], dtype=np.int32))
-		output = self(c0, test=test, softmax=True)
-		if gpu:
-			output.to_cpu()
-		return output.data
 
 	def learn(self, source_seq_batch, target_seq_batch, test=False):
 		self.encoder_lstm.reset_state()
@@ -185,14 +180,20 @@ class Model:
 		prev_y_onehot = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.float32))
 		for i, target_y_ids in enumerate(target_seq_batch):
 			confidence_y = self.decode_one_step(summary, prev_y_onehot, test=test, softmax=False)
-			target_y_ids = Variable(target_y_ids)
-			loss = F.softmax_cross_entropy(confidence_y, target_y_ids)
+			target_y = Variable(target_y_ids)
+			if xp is cuda.cupy:
+				target_y.to_gpu()
+			loss = F.softmax_cross_entropy(confidence_y, target_y)
 			sum_loss += loss
-			prev_y_ids = target_y_ids.data
+			# CuPy does not support advanced indexing
+			prev_y_ids = target_y_ids
 			prev_y_ids[prev_y_ids == -1] = 0
-			prev_y_onehot = xp.zeros(prev_y_onehot.data.shape, dtype=xp.float32)
-			prev_y_onehot[xp.arange(n_batch), prev_y_ids.astype(xp.int32)] = 1
+			prev_y_onehot = np.zeros(prev_y_onehot.data.shape, dtype=np.float32)
+			prev_y_onehot[np.arange(n_batch), prev_y_ids.astype(np.int32)] = 1
 			prev_y_onehot = Variable(prev_y_onehot)
+			if xp is cuda.cupy:
+				prev_y_onehot.to_gpu()
+
 		self.optimizer_encoder_lstm.zero_grads()
 		self.optimizer_decoder_lstm.zero_grads()
 		self.optimizer_decoder_fc.zero_grads()
@@ -257,6 +258,8 @@ def build():
 		enc_lstm.to_gpu()
 
 	enc_embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
+	if config.use_gpu:
+		enc_embed.to_gpu()
 
 	dec_lstm_attributes = {}
 	dec_lstm_units = zip(config.dec_lstm_units[:-1], config.dec_lstm_units[1:])

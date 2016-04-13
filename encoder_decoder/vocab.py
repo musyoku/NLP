@@ -33,5 +33,13 @@ def load(dir):
 def id_to_word(id):
 	return inv_vocab[id]
 
+def ids_to_str(ids):
+	str = ""
+	for i, id in enumerate(ids):
+		if id == 0:
+			break
+		str += id_to_word(id)
+	return str
+
 def word_to_id(word):
 	return vocab[word]

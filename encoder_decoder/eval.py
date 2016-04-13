@@ -8,22 +8,25 @@ from config import config
 # Windowsでprintする用
 sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharrefreplace")
 
-data_dir = "text"
+data_dir = "debug"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
 lm = model.build()
 lm.load(model_dir)
 
+def sample_seq():
+	target_batch_array = []
+	max_length_in_batch = 0
+	k = np.random.randint(0, config.n_dataset)
+	target_seq = dataset[k]
+	source_seq = target_seq[::-1]
+	return source_seq, target_seq
+
 for phrase in xrange(50):
 	lm.reset_state()
-	str = ""
-	char = dataset[np.random.randint(0, config.n_dataset)][0]
-	for n in xrange(1000):
-		str += vocab.id_to_word(char)
-		dist = lm.distribution(char, test=True)[0]
-		id = np.random.choice(np.arange(config.n_vocab, dtype=np.uint8), 1, p=dist)[0]
-		if id == 0:
-			break
-		char = id
-	print str
-
+	source_seq, target_seq = sample_seq()
+	y_ids = lm.decode(source_seq)
+	print "source_seq", source_seq
+	print "target_seq", target_seq
+	print "decode", y_ids
+	print vocab.ids_to_str(y_ids)
