@@ -14,7 +14,7 @@ lm = model.build()
 lm.load(model_dir)
 
 n_epoch = 1000
-n_train = 5000
+n_train = 50
 batchsize = 4
 total_time = 0
 
@@ -37,7 +37,7 @@ def make_batch():
 		source_batch_array.append(data)
 		if length > max_length_in_batch:
 			max_length_in_batch = length
-	source_batch = np.full((batchsize, max_length_in_batch), -1.0, dtype=np.float32)
+	source_batch = np.full((batchsize, max_length_in_batch), -1, dtype=np.int32)
 	for i, data in enumerate(source_batch_array):
 		source_batch[i,:len(data)] = data
 	# 翻訳データがないので今回は目標出力を自分自身とする

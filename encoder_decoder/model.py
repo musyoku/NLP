@@ -182,17 +182,17 @@ class Model:
 		sum_loss = 0
 		summary = self.encode(source_seq_batch, test=test)
 		target_seq_batch = target_seq_batch.T
-		prev_y_onehot = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.int32))
+		prev_y_onehot = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.float32))
 		for i, target_y_ids in enumerate(target_seq_batch):
-			# EmbedIDの-1問題を回避
-			target_y_ids[target_y_ids == -1] = 0
-			target_y_onehot = xp.zeros(prev_y_onehot.data.shape, dtype=xp.float32)
-			target_y_onehot[target_y_ids.astype(xp.int32)] = 1
-			target_y_onehot = Variable(xp.asanyarray(target_y_onehot, dtype=np.int32))
 			confidence_y = self.decode_one_step(summary, prev_y_onehot, test=test, softmax=False)
+			target_y_ids = Variable(target_y_ids)
 			loss = F.softmax_cross_entropy(confidence_y, target_y_ids)
 			sum_loss += loss
-			prev_y_onehot = target_y_onehot
+			prev_y_ids = target_y_ids.data
+			prev_y_ids[prev_y_ids == -1] = 0
+			prev_y_onehot = xp.zeros(prev_y_onehot.data.shape, dtype=xp.float32)
+			prev_y_onehot[xp.arange(n_batch), prev_y_ids.astype(xp.int32)] = 1
+			prev_y_onehot = Variable(prev_y_onehot)
 		self.optimizer_encoder_lstm.zero_grads()
 		self.optimizer_decoder_lstm.zero_grads()
 		self.optimizer_decoder_fc.zero_grads()
@@ -301,7 +301,7 @@ class Append(function.Function):
 
 		type_check.expect(
 			summary_type.dtype == np.float32,
-			prev_y_type.dtype == np.int32,
+			prev_y_type.dtype == np.float32,
 			summary_type.ndim == 2,
 			prev_y_type.ndim == 2,
 		)
