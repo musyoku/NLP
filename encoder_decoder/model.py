@@ -146,10 +146,11 @@ class Model:
 					distribution.to_cpu()
 				y = np.random.choice(ids, 1, p=distribution.data[0])
 			else:
-				confidence = self.decode_one_step(summary, prev_y, test=test)
+				confidence = self.decode_one_step(summary, prev_y, test=test, softmax=False)
 				if xp is cuda.cupy:
 					confidence.to_cpu()
-				y = np.argmax(confidence.data[0], axis=1)
+				y = np.argmax(confidence.data[0], axis=0)
+				y = np.asarray([y], dtype=np.uint8)
 			if y_seq is None:
 				y_seq = y
 			else:
