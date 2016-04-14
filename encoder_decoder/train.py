@@ -13,7 +13,7 @@ lm.load(model_dir)
 
 n_epoch = 1000
 n_train = 500
-batchsize = 1
+batchsize = 32
 total_time = 0
 
 # 長すぎるデータはメモリに乗らないこともあります

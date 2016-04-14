@@ -22,10 +22,10 @@ def sample_seq():
 	source_seq = target_seq[::-1]
 	return source_seq, target_seq
 
-for phrase in xrange(50):
-	lm.reset_state()
+for phrase in xrange(10):
 	source_seq, target_seq = sample_seq()
-	y_ids = lm.decode(source_seq, sampling_y=False)
+	lm.reset_state()
+	y_ids = lm.decode(source_seq, sampling_y=True)
 	print "source_seq", source_seq
 	print "target_seq", target_seq
 	print "decode", y_ids

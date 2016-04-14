@@ -89,6 +89,9 @@ class FullyConnectedNetwork(chainer.Chain):
 class Model:
 	def __init__(self, encoder_embed, encoder_lstm, decoder_lstm, decoder_fc):
 		self.encoder_embed = encoder_embed
+		self.optimizer_encoder_embed = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_encoder_embed.setup(self.encoder_embed)
+		self.optimizer_encoder_embed.add_hook(chainer.optimizer.GradientClipping(10.0))
 
 		self.encoder_lstm = encoder_lstm
 		self.optimizer_encoder_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
@@ -133,6 +136,7 @@ class Model:
 	# Outputs:	Numpy / CuPy
 	# Note:		sampling_yがTrueだと出力されるIDはsoftmax出力からサンプリングします。
 	#			そうでない場合は確信度が最も高いものを取ります。（訓練データを再生するだけの意味のないものになるかもしれません）
+	# 			decoderのLSTMの内部状態は適当にリセットしておいてください
 	def decode(self, x_seq, test=False, limit=1000, sampling_y=True):
 		xp = self.xp
 		summary = self.encode(x_seq.reshape(1, -1), test=test)
@@ -169,10 +173,10 @@ class Model:
 
 	def reset_state(self):
 		self.encoder_lstm.reset_state()
+		self.decoder_lstm.reset_state()
 
 	def learn(self, source_seq_batch, target_seq_batch, test=False):
-		self.encoder_lstm.reset_state()
-		self.decoder_lstm.reset_state()
+		self.reset_state()
 		xp = self.xp
 		n_batch = source_seq_batch.shape[0]
 		sum_loss = 0
@@ -195,10 +199,12 @@ class Model:
 			if xp is cuda.cupy:
 				prev_y_onehot.to_gpu()
 
+		self.optimizer_encoder_embed.zero_grads()
 		self.optimizer_encoder_lstm.zero_grads()
 		self.optimizer_decoder_lstm.zero_grads()
 		self.optimizer_decoder_fc.zero_grads()
 		sum_loss.backward()
+		self.optimizer_encoder_embed.update()
 		self.optimizer_encoder_lstm.update()
 		self.optimizer_decoder_lstm.update()
 		self.optimizer_decoder_fc.update()
@@ -207,19 +213,35 @@ class Model:
 	def load(self, dir=None, name="encoder_lstm"):
 		if dir is None:
 			raise Exception()
-		filename = dir + "/%s_fc.model" % name
+		filename = dir + "/%s_decoder_fc.model" % name
 		if os.path.isfile(filename):
 			serializers.load_hdf5(filename, self.decoder_fc)
 			print filename, "loaded."
-		filename = dir + "/%s_lstm.model" % name
+		filename = dir + "/%s_decoder_lstm.model" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.decoder_lstm)
+			print filename, "loaded."
+		filename = dir + "/%s_encoder_embed.model" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.encoder_embed)
+			print filename, "loaded."
+		filename = dir + "/%s_encoder_lstm.model" % name
 		if os.path.isfile(filename):
 			serializers.load_hdf5(filename, self.encoder_lstm)
 			print filename, "loaded."
-		filename = dir + "/%s_fc.optimizer" % name
+		filename = dir + "/%s_decoder_fc.optimizer" % name
 		if os.path.isfile(filename):
 			serializers.load_hdf5(filename, self.optimizer_decoder_fc)
 			print filename, "loaded."
-		filename = dir + "/%s_lstm.optimizer" % name
+		filename = dir + "/%s_decoder_lstm.optimizer" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.optimizer_decoder_lstm)
+			print filename, "loaded."
+		filename = dir + "/%s_encoder_embed.optimizer" % name
+		if os.path.isfile(filename):
+			serializers.load_hdf5(filename, self.optimizer_encoder_embed)
+			print filename, "loaded."
+		filename = dir + "/%s_encoder_lstm.optimizer" % name
 		if os.path.isfile(filename):
 			serializers.load_hdf5(filename, self.optimizer_encoder_lstm)
 			print filename, "loaded."
@@ -231,11 +253,15 @@ class Model:
 			os.mkdir(dir)
 		except:
 			pass
-		serializers.save_hdf5(dir + "/%s_fc.model" % name, self.decoder_fc)
-		serializers.save_hdf5(dir + "/%s_lstm.model" % name, self.encoder_lstm)
+		serializers.save_hdf5(dir + "/%s_decoder_fc.model" % name, self.decoder_fc)
+		serializers.save_hdf5(dir + "/%s_decoder_lstm.model" % name, self.decoder_lstm)
+		serializers.save_hdf5(dir + "/%s_encoder_embed.model" % name, self.encoder_embed)
+		serializers.save_hdf5(dir + "/%s_encoder_lstm.model" % name, self.encoder_lstm)
 		print "model saved."
-		serializers.save_hdf5(dir + "/%s_fc.optimizer" % name, self.optimizer_decoder_fc)
-		serializers.save_hdf5(dir + "/%s_lstm.optimizer" % name, self.optimizer_encoder_lstm)
+		serializers.save_hdf5(dir + "/%s_decoder_fc.optimizer" % name, self.optimizer_decoder_fc)
+		serializers.save_hdf5(dir + "/%s_decoder_lstm.optimizer" % name, self.optimizer_decoder_lstm)
+		serializers.save_hdf5(dir + "/%s_encoder_embed.optimizer" % name, self.optimizer_encoder_embed)
+		serializers.save_hdf5(dir + "/%s_encoder_lstm.optimizer" % name, self.optimizer_encoder_lstm)
 		print "optimizer saved."
 
 
