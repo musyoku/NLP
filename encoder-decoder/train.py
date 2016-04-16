@@ -5,15 +5,15 @@ import model
 import vocab
 from config import config
 
-data_dir = "debug"
+data_dir = "text"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
 lm = model.build()
 lm.load(model_dir)
 
 n_epoch = 1000
-n_train = 500
-batchsize = 32
+n_train = 5000
+batchsize = 64
 total_time = 0
 
 # 長すぎるデータはメモリに乗らないこともあります

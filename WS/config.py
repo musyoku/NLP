@@ -8,16 +8,18 @@ class Config(object):
 		self.learning_rate = 0.00025
 		self.gradient_momentum = 0.95
 
-		# 文字埋め込みベクトルの次元数
-		self.embed_size = 200
+		self.embed_size = 100
+		self.intermidiate_size = 300
 
-		# 各LSTMレイヤのユニット数を入力側から出力側に向かって並べる
-		## e.g 500(input vector)->250->100(output vector)
-		## self.q_fc_units = [500, 250, 100]
-		self.enc_lstm_units = [self.embed_size, 1024]
+		self.enc_lstm_units = [self.embed_size, 768]
 		self.enc_lstm_apply_batchnorm = False
 		self.enc_lstm_apply_batchnorm_to_input = False
 		self.enc_lstm_apply_dropout = False
+
+		self.itm_lstm_units = [self.enc_lstm_units[-1] + self.intermidiate_size, 1024]
+		self.itm_lstm_apply_batchnorm = False
+		self.itm_lstm_apply_batchnorm_to_input = False
+		self.itm_lstm_apply_dropout = False
 
 		self.dec_lstm_apply_batchnorm = False
 		self.dec_lstm_apply_batchnorm_to_input = False
@@ -35,9 +37,7 @@ class Config(object):
 
 	@n_vocab.setter
 	def n_vocab(self, value):
-		self.dec_lstm_units = [self.enc_lstm_units[-1] + value, 1024]
-		# Decoder LSTM出力をIDに変換する全結合層の各ユニット数 
-		## 出力であるソフトマックス層は自動的に挿入されます
+		self.dec_lstm_units = [self.itm_lstm_units[-1] + value, 1024]
 		self.dec_fc_units = [self.dec_lstm_units[-1], 1024]
 		self._n_vocab = value
 

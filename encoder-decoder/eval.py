@@ -8,7 +8,7 @@ from config import config
 # Windowsでprintする用
 sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharrefreplace")
 
-data_dir = "debug"
+data_dir = "text"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
 lm = model.build()
@@ -22,11 +22,12 @@ def sample_seq():
 	source_seq = target_seq[::-1]
 	return source_seq, target_seq
 
-for phrase in xrange(10):
+for phrase in xrange(50):
 	source_seq, target_seq = sample_seq()
 	lm.reset_state()
-	y_ids = lm.decode(source_seq, sampling_y=True)
+	y_seq = lm.decode(source_seq, sampling_y=True, test=True)
 	print "source_seq", source_seq
+	print vocab.ids_to_str(source_seq[::-1])
 	print "target_seq", target_seq
-	print "decode", y_ids
-	print vocab.ids_to_str(y_ids)
+	print "decode", y_seq
+	print vocab.ids_to_str(y_seq)

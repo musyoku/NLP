@@ -35,10 +35,11 @@ class Config(object):
 
 	@n_vocab.setter
 	def n_vocab(self, value):
+		# Decoderは1時刻前のy（n_vocab次元）とh（enc_lstm_units[-1]次元）を入力する
 		self.dec_lstm_units = [self.enc_lstm_units[-1] + value, 1024]
 		# Decoder LSTM出力をIDに変換する全結合層の各ユニット数 
 		## 出力であるソフトマックス層は自動的に挿入されます
-		self.dec_fc_units = [self.dec_lstm_units[-1], 1024]
+		self.dec_fc_units = [self.dec_lstm_units[-1], 2048]
 		self._n_vocab = value
 
 	def check(self):
