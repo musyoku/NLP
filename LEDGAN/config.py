@@ -8,7 +8,12 @@ class Config(object):
 		self.learning_rate = 0.00025
 		self.gradient_momentum = 0.95
 
-		# 文字埋め込みベクトルの次元数
+		# Generator
+		## zの次元数
+		self.z_size = 512
+
+		# Discriminator
+		## 文字埋め込みベクトルの次元数
 		self.embed_size = 200
 
 		# 各LSTMレイヤのユニット数を入力側から出力側に向かって並べる
