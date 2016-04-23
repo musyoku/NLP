@@ -218,16 +218,7 @@ class AttentiveReader:
 			raise Exception()
 		for attr in vars(self):
 			prop = getattr(self, attr)
-			load = False
-			if isinstance(prop, chainer.Chain):
-				load = True
-			elif isinstance(prop, L.Linear):
-				load = True
-			elif isinstance(prop, L.EmbedID):
-				load = True
-			elif isinstance(prop, chainer.optimizer.GradientMethod):
-				load = True
-			if load:
+			if isinstance(prop, chainer.Chain) or isinstance(prop, L.Linear) or isinstance(prop, L.EmbedID) or isinstance(prop, chainer.optimizer.GradientMethod):
 				filename = dir + "/%s.hdf5" % attr
 				if os.path.isfile(filename):
 					serializers.load_hdf5(filename, prop)
@@ -242,16 +233,7 @@ class AttentiveReader:
 			pass
 		for attr in vars(self):
 			prop = getattr(self, attr)
-			save = False
-			if isinstance(prop, chainer.Chain):
-				save = True
-			elif isinstance(prop, L.Linear):
-				save = True
-			elif isinstance(prop, L.EmbedID):
-				save = True
-			elif isinstance(prop, chainer.optimizer.GradientMethod):
-				save = True
-			if save:
+			if isinstance(prop, chainer.Chain) or isinstance(prop, L.Linear) or isinstance(prop, L.EmbedID) or isinstance(prop, chainer.optimizer.GradientMethod):
 				serializers.save_hdf5(dir + "/%s.hdf5" % attr, prop)
 				print attr, "saved."
 
