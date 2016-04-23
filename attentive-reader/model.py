@@ -111,64 +111,35 @@ class AttentiveReader:
 		self.optimizer_reader_fc.setup(self.reader_fc)
 		self.optimizer_reader_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
 
-	# Inputs:	Numpy / CuPy
-	# Returns:	Variable
-	def encode(self, x_seq_batch, test=False):
-		self.encoder_lstm.reset_state()
+	def encode(self, x_seq, test=False):
+		self.reset_state()
 		xp = self.xp
-		x_seq_batch = x_seq_batch.T
-		for i, cur_x in enumerate(x_seq_batch):
-			cur_x[cur_x == -1] = 0
-			cur_x = Variable(xp.asanyarray(cur_x, dtype=np.int32))
-			embed = self.char_embed(cur_x)
-			output = self.encoder_lstm(embed, test=test)
-		return output
+		forward_context = []
+		backward_context = []
+		for char in x_seq:
+			print char
+			char = Variable(xp.array([char], dtype=xp.int32).reshape(1, 1))
+			embed = self.char_embed(char)
+			y = self.forward_lstm(embed, test=test)
+			forward_context.append(y)
 
-	# Inputs:	Variable, Variable
-	# Returns:	Confidence of each word ID
-	# Note:		decoderのLSTMの内部状態は適当にリセットしておいてください
-	def decode_one_step(self, summary, prev_y, test=False, softmax=True):
-		input = append_variable(summary, prev_y)
-		h = self.decoder_lstm(input, test=test)
-		output = self.decoder_fc(h, test=test)
-		if softmax:
-			output = F.softmax(output)
-		return output
+		for char in x_seq[::-1]:
+			char = Variable(xp.array([char], dtype=xp.int32).reshape(1, 1))
+			embed = self.char_embed(char)
+			y = self.backward_lstm(embed, test=test)
+			backward_context.append(y)
+		return forward_context, backward_context
 
-	# Inputs:	Numpy / CuPy
-	# Outputs:	Numpy / CuPy
-	# Note:		sampling_yがTrueだと出力されるIDはsoftmax出力からサンプリングします。
-	#			そうでない場合は確信度が最も高いものを取ります。（訓練データを再生するだけの意味のないものになるかもしれません）
-	# 			decoderのLSTMの内部状態は適当にリセットしておいてください
-	def decode(self, x_seq, test=False, limit=1000, sampling_y=True):
-		xp = self.xp
-		summary = self.encode(x_seq.reshape(1, -1), test=test)
-		y_seq = None
-		ids = np.arange(config.n_vocab, dtype=np.uint8)
-		prev_y = Variable(xp.zeros((1, config.n_vocab), dtype=xp.float32))
-		for t in xrange(limit):
-			if sampling_y:
-				distribution = self.decode_one_step(summary, prev_y, test=test, softmax=True)
-				if xp is cuda.cupy:
-					distribution.to_cpu()
-				y = np.random.choice(ids, 1, p=distribution.data[0])
-			else:
-				confidence = self.decode_one_step(summary, prev_y, test=test, softmax=False)
-				if xp is cuda.cupy:
-					confidence.to_cpu()
-				y = np.argmax(confidence.data[0], axis=0)
-				y = np.asarray([y], dtype=np.uint8)
-			if y_seq is None:
-				y_seq = y
-			else:
-				y_seq = np.append(y_seq, y)
-			y = y[0]
-			if y == 0:
-				break
-			prev_y = xp.zeros((1, config.n_vocab), dtype=xp.float32)
-			prev_y[0, y] = 1
-			prev_y = Variable(prev_y)
-		return y_seq
+	def attend(self, forward_context, backward_context, test=False):
+		u = concat_variables(forward_context[-1], backward_context[-1])
+		length = len(forward_context)
+		attention_sum = 0
+		for t in xrange(length):
+			yd_t = concat_variables(forward_context[t], backward_context[length - t - 1])
+			m_t = F.tanh(f_ym(yd_t) + f_um(u))
+			s_t = attention_fc(m_t, test=False)
+			attention_sum += s_t
+		print attention_sum
 
 	@property
 	def xp(self):
@@ -178,7 +149,7 @@ class AttentiveReader:
 		self.forward_lstm.reset_state()
 		self.backward_lstm.reset_state()
 
-	def train(self, source_seq_batch, target_seq_batch, test=False):
+	def train(self, x_seq, test=False):
 		self.reset_state()
 		xp = self.xp
 		n_batch = source_seq_batch.shape[0]
