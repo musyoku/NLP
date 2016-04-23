@@ -21,7 +21,7 @@ class LSTM(chainer.Chain):
 
 		for i in range(self.n_layers):
 			output = getattr(self, "layer_%i" % i)(chain[-1])
-			if self.apply_dropout:
+			if self.apply_dropout and i != self.n_layers - 1:
 				output = F.dropout(output, train=not test)
 			chain.append(output)
 
@@ -38,18 +38,25 @@ class FullyConnectedNetwork(chainer.Chain):
 	def __init__(self, **layers):
 		super(FullyConnectedNetwork, self).__init__(**layers)
 		self.n_layers = 0
-		self.activation_function = "elu"
+		self.hidden_activation_function = "elu"
+		self.output_activation_function = None
 		self.apply_dropout = False
 
 	def forward_one_step(self, x, test):
-		f = activations[self.activation_function]
+		f = activations[self.hidden_activation_function]
 		chain = [x]
 
 		for i in range(self.n_layers):
 			u = getattr(self, "layer_%i" % i)(chain[-1])
-			output = f(u)
-			if self.apply_dropout:
-				output = F.dropout(output, train=not test)
+			if i == self.n_layers - 1:
+				if self.output_activation_function:
+					output = activations[self.output_activation_function](u)
+				else:
+					output = u
+			else:
+				output = f(u)
+				if self.apply_dropout:
+					output = F.dropout(output, train=not test)
 			chain.append(output)
 
 		return chain[-1]
@@ -271,18 +278,26 @@ def build():
 
 	attention_fc_attributes = {}
 	attention_fc_units = zip(config.attention_fc_units[:-1], config.attention_fc_units[1:])
-
 	for i, (n_in, n_out) in enumerate(attention_fc_units):
 		attention_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-
 	attention_fc = FullyConnectedNetwork(**attention_fc_attributes)
 	attention_fc.n_layers = len(attention_fc_units) - 1
-	attention_fc.activation_function = config.attention_fc_activation_function
+	attention_fc.hidden_activation_function = config.attention_fc_hidden_activation_function
+	attention_fc.output_activation_function = config.attention_fc_output_activation_function
 	attention_fc.apply_dropout = config.attention_fc_apply_dropout
-
 		
 	f_rg = L.linear(config.ndim_m, config.ndim_g, nobias=True)
 	f_ug = L.linear(config.ndim_m, config.ndim_g, nobias=True)
+
+	reader_fc_attributes = {}
+	reader_fc_units = zip(config.reader_fc_units[:-1], config.reader_fc_units[1:])
+	for i, (n_in, n_out) in enumerate(reader_fc_units):
+		reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+	reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
+	reader_fc.n_layers = len(attention_fc_units) - 1
+	reader_fc.hidden_activation_function = config.reader_fc_hidden_activation_function
+	reader_fc.output_activation_function = config.reader_fc_output_activation_function
+	reader_fc.apply_dropout = config.attention_fc_apply_dropout
 
 	if config.use_gpu:
 		forward_lstm.to_gpu()
@@ -290,6 +305,8 @@ def build():
 		embed.to_gpu()
 		attention_fc.to_gpu()
 		f_ym.to_gpu()
+		f_um.to_gpu()
+		f_rg.to_gpu()
 		f_um.to_gpu()
 
 	return Model(embed, enc_lstm, attention_lstm, dec_fc)
