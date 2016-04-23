@@ -15,22 +15,12 @@ class LSTM(chainer.Chain):
 		self.n_layers = 0
 		self.activation_function = None
 		self.apply_dropout = False
-		self.apply_batchnorm = False
-		self.apply_batchnorm_to_input = False
 
 	def forward_one_step(self, x, test):
 		chain = [x]
 
-		# Hidden layers
 		for i in range(self.n_layers):
-			u = chain[-1]
-			if i == 0:
-				if self.apply_batchnorm_to_input:
-					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
-			else:
-				if self.apply_batchnorm:
-					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
-			output = getattr(self, "layer_%i" % i)(u)
+			output = getattr(self, "layer_%i" % i)(chain[-1])
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
 			chain.append(output)
@@ -44,8 +34,31 @@ class LSTM(chainer.Chain):
 	def __call__(self, x, test=False):
 		return self.forward_one_step(x, test=test)
 
+class FullyConnectedNetwork(chainer.Chain):
+	def __init__(self, **layers):
+		super(FullyConnectedNetwork, self).__init__(**layers)
+		self.n_layers = 0
+		self.activation_function = "elu"
+		self.apply_dropout = False
+
+	def forward_one_step(self, x, test):
+		f = activations[self.activation_function]
+		chain = [x]
+
+		for i in range(self.n_layers):
+			u = getattr(self, "layer_%i" % i)(chain[-1])
+			output = f(u)
+			if self.apply_dropout:
+				output = F.dropout(output, train=not test)
+			chain.append(output)
+
+		return chain[-1]
+
+	def __call__(self, x, test=False):
+		return self.forward_one_step(x, test=test)
+
 class Model:
-	def __init__(self, forward_lstm, backward_lstm, f_um, f_ym, f_ms, f_rg, f_ug):
+	def __init__(self, encoder_embed, forward_lstm, backward_lstm, f_um, f_ym, attention_fc, f_rg, f_ug):
 		self.encoder_embed = encoder_embed
 		self.optimizer_encoder_embed = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_encoder_embed.setup(self.encoder_embed)
@@ -232,54 +245,54 @@ def build():
 
 	for i, (n_in, n_out) in enumerate(forward_lstm_units):
 		forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
-		forward_lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
 
 	forward_lstm = LSTM(**forward_lstm_attributes)
 	forward_lstm.n_layers = len(forward_lstm_units) - 1
 	forward_lstm.apply_batchnorm = config.forward_lstm_apply_batchnorm
 	forward_lstm.apply_batchnorm_to_input = config.forward_lstm_apply_batchnorm_to_input
 	forward_lstm.apply_dropout = config.forward_lstm_apply_dropout
+
+	backward_lstm_attributes = {}
+	backward_lstm_units = zip(config.bi_lstm_units[:-1], config.bi_lstm_units[1:])
+
+	for i, (n_in, n_out) in enumerate(backward_lstm_units):
+		backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+
+	backward_lstm = LSTM(**backward_lstm_attributes)
+	backward_lstm.n_layers = len(backward_lstm_units) - 1
+	backward_lstm.apply_batchnorm = config.backward_lstm_apply_batchnorm
+	backward_lstm.apply_batchnorm_to_input = config.backward_lstm_apply_batchnorm_to_input
+	backward_lstm.apply_dropout = config.backward_lstm_apply_dropout
+
+	embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
+
+	f_ym = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
+	f_um = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
+
+	attention_fc_attributes = {}
+	attention_fc_units = zip(config.attention_fc_units[:-1], config.attention_fc_units[1:])
+
+	for i, (n_in, n_out) in enumerate(attention_fc_units):
+		attention_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+
+	attention_fc = FullyConnectedNetwork(**attention_fc_attributes)
+	attention_fc.n_layers = len(attention_fc_units) - 1
+	attention_fc.activation_function = config.attention_fc_activation_function
+	attention_fc.apply_dropout = config.attention_fc_apply_dropout
+
+		
+	f_ym = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
+	f_um = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
+
 	if config.use_gpu:
 		forward_lstm.to_gpu()
+		backward_lstm.to_gpu()
+		embed.to_gpu()
+		attention_fc.to_gpu()
+		f_ym.to_gpu()
+		f_um.to_gpu()
 
-	enc_embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
-	if config.use_gpu:
-		enc_embed.to_gpu()
-
-	dec_lstm_attributes = {}
-	dec_lstm_units = zip(config.dec_lstm_units[:-1], config.dec_lstm_units[1:])
-
-	for i, (n_in, n_out) in enumerate(dec_lstm_units):
-		dec_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
-		dec_lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
-
-	dec_lstm = LSTM(**dec_lstm_attributes)
-	dec_lstm.n_layers = len(dec_lstm_units)
-	dec_lstm.apply_batchnorm = config.dec_lstm_apply_batchnorm
-	dec_lstm.apply_batchnorm_to_input = config.dec_lstm_apply_batchnorm_to_input
-	dec_lstm.apply_dropout = config.dec_lstm_apply_dropout
-	if config.use_gpu:
-		dec_lstm.to_gpu()
-
-	dec_fc_attributes = {}
-	dec_fc_units = zip(config.dec_fc_units[:-1], config.dec_fc_units[1:])
-	dec_fc_units += [(config.dec_fc_units[-1], config.n_vocab)]
-
-	for i, (n_in, n_out) in enumerate(dec_fc_units):
-		dec_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-		dec_fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
-
-	dec_fc = FullyConnectedNetwork(**dec_fc_attributes)
-	dec_fc.n_hidden_layers = len(dec_fc_units) - 1
-	dec_fc.activation_function = config.dec_fc_activation_function
-	dec_fc.apply_batchnorm_to_input = config.dec_fc_apply_batchnorm_to_input
-	dec_fc.apply_batchnorm_to_output = config.dec_fc_apply_batchnorm_to_output
-	dec_fc.apply_batchnorm = config.dec_fc_apply_batchnorm
-	dec_fc.apply_dropout = config.dec_fc_apply_dropout
-	if config.use_gpu:
-		dec_fc.to_gpu()
-
-	return Model(enc_embed, enc_lstm, dec_lstm, dec_fc)
+	return Model(embed, enc_lstm, attention_lstm, dec_fc)
 
 class Concat(function.Function):
 	def check_type_forward(self, in_types):
