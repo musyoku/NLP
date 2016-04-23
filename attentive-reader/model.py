@@ -127,18 +127,26 @@ class AttentiveReader:
 			embed = self.char_embed(char)
 			y = self.backward_lstm(embed, test=test)
 			backward_context.append(y)
-		return forward_context, backward_context
 
-	def attend(self, forward_context, backward_context, test=False):
-		u = concat_variables(forward_context[-1], backward_context[-1])
-		length = len(forward_context)
-		attention_sum = 0
+		length = len(x_seq)
+		context = []
 		for t in xrange(length):
 			yd_t = concat_variables(forward_context[t], backward_context[length - t - 1])
-			m_t = F.tanh(self.f_ym(yd_t) + self.f_um(u))
-			s_t = self.attention_fc(m_t, test=False)
+			context.append(yd_t)
+		u = concat_variables(forward_context[-1], backward_context[-1])
+		return context, u
+
+	def attend(self, context, encode, test=False):
+		length = len(context)
+		attention_sum = 0
+		weights = []
+		for t in xrange(length):
+			yd_t = context[t]
+			m_t = F.tanh(self.f_ym(yd_t) + self.f_um(encode))
+			s_t = F.exp(self.attention_fc(m_t, test=False))
+			weights.append(s_t)
 			attention_sum += s_t
-		print attention_sum.data
+		return weights, attention_sum
 
 	@property
 	def xp(self):
@@ -150,20 +158,43 @@ class AttentiveReader:
 
 	def train(self, x_seq, test=False):
 		length = len(x_seq)
-		for t in xrange(length):
-			target = x_seq[t]
-			if t == 0:
+		for pos in xrange(length):
+			target = x_seq[pos]
+			former = None
+			latter = None
+			attention_sum = 0
+
+			if pos == 0:
 				latter = x_seq[1:]
-				print latter
-			elif t == length - 1:
-				former = x_seq[:t]
+			elif pos == length - 1:
+				former = x_seq[:pos]
 				print former
 			else:
-				former = x_seq[:t]
-				latter = x_seq[t + 1:]
-				print former, latter
-		forward_context, backward_context = self.encode(x_seq, test=test)
-		self.attend(forward_context, backward_context, test=test)
+				former = x_seq[:pos]
+				latter = x_seq[pos + 1:]
+
+			former_context = None
+			latter_context = None
+
+			if former is not None:
+				former_context, former_encode = self.encode(former, test=test)
+				former_attention_weight, former_attention_sum = self.attend(former_context, former_encode, test=test)
+				attention_sum += former_attention_sum
+			if latter is not None:
+				latter_context, latter_encode = self.encode(latter, test=test)
+				latter_attention_weight, latter_attention_sum = self.attend(latter_context, latter_encode, test=test)
+				attention_sum += latter_attention_sum
+
+			representation = 0
+
+			if former_context is not None:
+				for t in xrange(len(former_context)):
+					representation += apply_attention(former_context[t], former_attention_weight[t] / attention_sum)
+			if latter_context is not None:
+				for t in xrange(len(latter_context)):
+					representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
+			print representation.data
+
 
 	def load(self, dir=None, name="ar"):
 		if dir is None:
@@ -299,15 +330,13 @@ class Attention(function.Function):
 	def forward(self, inputs):
 		xp = cuda.get_array_module(inputs[0])
 		context, weight = inputs
-		n_batch = context.shape[0]
-		output = xp.empty((n_batch, context.shape[1] + weight.shape[1]), dtype=xp.float32)
-		output[:,:context.shape[1]] = context
-		output[:,context.shape[1]:] = weight
+		output = context * weight
 		return output,
 
 	def backward(self, inputs, grad_outputs):
+		xp = cuda.get_array_module(inputs[0])
 		context, weight = inputs
-		return grad_outputs[0][:,:context.shape[1]], grad_outputs[0][:,context.shape[1]:]
+		return grad_outputs[0] * weight, xp.sum(grad_outputs[0] * context, axis=1).reshape(-1, 1)
 
 def apply_attention(context, weight):
-	return Concat()(context, weight)
+	return Attention()(context, weight)
