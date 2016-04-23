@@ -15,14 +15,13 @@ def load(dir):
 		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
 		for line in unko:
 			line = line.replace("\n", "")
-			data = np.empty((len(line) + 1,), dtype=np.int32)
+			data = np.empty((len(line),), dtype=np.int32)
 			for i in xrange(len(line)):
 				word = line[i]
 				if word not in vocab:
 					vocab[word] = len(vocab)
 					inv_vocab[vocab[word]] = word
 				data[i] = vocab[word]
-			data[len(line)] = 0
 			dataset.append(data)
 	n_vocab = len(vocab)
 	n_dataset = len(dataset)

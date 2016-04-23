@@ -150,13 +150,13 @@ class AttentiveReader:
 
 	def train(self, x_seq, test=False):
 		length = len(x_seq)
-		for t in xrange(length - 1):
+		for t in xrange(length):
 			target = x_seq[t]
 			if t == 0:
 				latter = x_seq[1:]
 				print latter
-			elif t == length - 2:
-				former = x_seq[:t-1]
+			elif t == length - 1:
+				former = x_seq[:t]
 				print former
 			else:
 				former = x_seq[:t]
