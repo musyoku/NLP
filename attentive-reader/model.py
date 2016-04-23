@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, time
+import os, time, re
 import numpy as np
 import chainer
 from chainer import cuda, Variable, optimizers, serializers, function, link
@@ -9,9 +9,9 @@ from chainer import links as L
 from config import config
 from activations import activations
 
-class LSTM(chainer.Chain):
+class StackedLSTM(chainer.Chain):
 	def __init__(self, **layers):
-		super(LSTM, self).__init__(**layers)
+		super(StackedLSTM, self).__init__(**layers)
 		self.n_layers = 0
 		self.activation_function = None
 		self.apply_dropout = False
@@ -172,13 +172,13 @@ class AttentiveReader:
 
 	@property
 	def xp(self):
-		return np if self.encoder_lstm.layer_0._cpu else cuda.cupy
+		return np if self.char_embed._cpu else cuda.cupy
 
 	def reset_state(self):
-		self.encoder_lstm.reset_state()
-		self.decoder_lstm.reset_state()
+		self.forward_lstm.reset_state()
+		self.backward_lstm.reset_state()
 
-	def learn(self, source_seq_batch, target_seq_batch, test=False):
+	def train(self, source_seq_batch, target_seq_batch, test=False):
 		self.reset_state()
 		xp = self.xp
 		n_batch = source_seq_batch.shape[0]
@@ -216,20 +216,44 @@ class AttentiveReader:
 	def load(self, dir=None, name="ar"):
 		if dir is None:
 			raise Exception()
-		filename = dir + "/%s.model" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self)
-			print filename, "loaded."
+		for attr in vars(self):
+			prop = getattr(self, attr)
+			load = False
+			if isinstance(prop, chainer.Chain):
+				load = True
+			elif isinstance(prop, L.Linear):
+				load = True
+			elif isinstance(prop, L.EmbedID):
+				load = True
+			elif isinstance(prop, chainer.optimizer.GradientMethod):
+				load = True
+			if load:
+				filename = dir + "/%s.hdf5" % attr
+				if os.path.isfile(filename):
+					serializers.load_hdf5(filename, prop)
+					print attr, "loaded."
 
-	def save(self, dir=None, name="ar"):
+	def save(self, dir=None):
 		if dir is None:
 			raise Exception()
 		try:
 			os.mkdir(dir)
 		except:
 			pass
-		serializers.save_hdf5(dir + "/%s.model" % name, self.decoder_fc)
-		print "model saved."
+		for attr in vars(self):
+			prop = getattr(self, attr)
+			save = False
+			if isinstance(prop, chainer.Chain):
+				save = True
+			elif isinstance(prop, L.Linear):
+				save = True
+			elif isinstance(prop, L.EmbedID):
+				save = True
+			elif isinstance(prop, chainer.optimizer.GradientMethod):
+				save = True
+			if save:
+				serializers.save_hdf5(dir + "/%s.hdf5" % attr, prop)
+				print attr, "saved."
 
 def build():
 	config.check()
@@ -241,11 +265,9 @@ def build():
 	for i, (n_in, n_out) in enumerate(forward_lstm_units):
 		forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 
-	forward_lstm = LSTM(**forward_lstm_attributes)
+	forward_lstm = StackedLSTM(**forward_lstm_attributes)
 	forward_lstm.n_layers = len(forward_lstm_units) - 1
-	forward_lstm.apply_batchnorm = config.forward_lstm_apply_batchnorm
-	forward_lstm.apply_batchnorm_to_input = config.forward_lstm_apply_batchnorm_to_input
-	forward_lstm.apply_dropout = config.forward_lstm_apply_dropout
+	forward_lstm.apply_dropout = config.bi_lstm_apply_dropout
 
 	backward_lstm_attributes = {}
 	backward_lstm_units = zip(config.bi_lstm_units[:-1], config.bi_lstm_units[1:])
@@ -253,16 +275,14 @@ def build():
 	for i, (n_in, n_out) in enumerate(backward_lstm_units):
 		backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 
-	backward_lstm = LSTM(**backward_lstm_attributes)
+	backward_lstm = StackedLSTM(**backward_lstm_attributes)
 	backward_lstm.n_layers = len(backward_lstm_units) - 1
-	backward_lstm.apply_batchnorm = config.backward_lstm_apply_batchnorm
-	backward_lstm.apply_batchnorm_to_input = config.backward_lstm_apply_batchnorm_to_input
-	backward_lstm.apply_dropout = config.backward_lstm_apply_dropout
+	backward_lstm.apply_dropout = config.bi_lstm_apply_dropout
 
-	char_embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
+	char_embed = L.EmbedID(config.n_vocab, config.ndim_char_embed)
 
-	f_ym = L.linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
-	f_um = L.linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
+	f_ym = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
+	f_um = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
 
 	attention_fc_attributes = {}
 	attention_fc_units = zip(config.attention_fc_units[:-1], config.attention_fc_units[1:])
@@ -274,8 +294,8 @@ def build():
 	attention_fc.output_activation_function = config.attention_fc_output_activation_function
 	attention_fc.apply_dropout = config.attention_fc_apply_dropout
 		
-	f_rg = L.linear(config.ndim_m, config.ndim_g, nobias=True)
-	f_ug = L.linear(config.ndim_m, config.ndim_g, nobias=True)
+	f_rg = L.Linear(config.ndim_m, config.ndim_g, nobias=True)
+	f_ug = L.Linear(config.ndim_m, config.ndim_g, nobias=True)
 
 	reader_fc_attributes = {}
 	reader_fc_units = zip(config.reader_fc_units[:-1], config.reader_fc_units[1:])
@@ -328,3 +348,32 @@ class Concat(function.Function):
 
 def concat_variables(v_a, v_b):
 	return Concat()(v_a, v_b)
+
+class Attention(function.Function):
+	def check_type_forward(self, in_types):
+		n_in = in_types.size()
+		type_check.expect(n_in == 2)
+		context_type, weight_type = in_types
+
+		type_check.expect(
+			context_type.dtype == np.float32,
+			weight_type.dtype == np.float32,
+			context_type.ndim == 2,
+			weight_type.ndim == 2,
+		)
+
+	def forward(self, inputs):
+		xp = cuda.get_array_module(inputs[0])
+		context, weight = inputs
+		n_batch = context.shape[0]
+		output = xp.empty((n_batch, context.shape[1] + weight.shape[1]), dtype=xp.float32)
+		output[:,:context.shape[1]] = context
+		output[:,context.shape[1]:] = weight
+		return output,
+
+	def backward(self, inputs, grad_outputs):
+		context, weight = inputs
+		return grad_outputs[0][:,:context.shape[1]], grad_outputs[0][:,context.shape[1]:]
+
+def apply_attention(context, weight):
+	return Concat()(context, weight)

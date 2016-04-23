@@ -13,7 +13,7 @@ class Config(object):
 		self.ndim_m = 512
 		self.ndim_g = 1024
 
-		self.bi_lstm_units = [self.char_embed_ndim, 1024]
+		self.bi_lstm_units = [self.ndim_char_embed, 1024]
 		self.bi_lstm_apply_dropout = False
 
 		self.attention_fc_units = [self.ndim_m, 1]
