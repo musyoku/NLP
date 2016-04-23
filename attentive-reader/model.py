@@ -266,8 +266,8 @@ def build():
 
 	embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
 
-	f_ym = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
-	f_um = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
+	f_ym = L.linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
+	f_um = L.linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
 
 	attention_fc_attributes = {}
 	attention_fc_units = zip(config.attention_fc_units[:-1], config.attention_fc_units[1:])
@@ -281,8 +281,8 @@ def build():
 	attention_fc.apply_dropout = config.attention_fc_apply_dropout
 
 		
-	f_ym = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
-	f_um = L.linear(config.bi_lstm_units[-1] * 2, config.intermidiate_ndim, nobias=True)
+	f_rg = L.linear(config.ndim_m, config.ndim_g, nobias=True)
+	f_ug = L.linear(config.ndim_m, config.ndim_g, nobias=True)
 
 	if config.use_gpu:
 		forward_lstm.to_gpu()

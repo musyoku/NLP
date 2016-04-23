@@ -9,16 +9,22 @@ class Config(object):
 		self.gradient_momentum = 0.95
 		self.n_vocab = -1
 
-		self.char_embed_ndim = 200
-		self.intermidiate_ndim = 300
-		self.representation_ndim = 400
+		self.ndim_char_embed = 200
+		self.ndim_m = 512
+		self.ndim_g = 1024
 
 		self.bi_lstm_units = [self.char_embed_ndim, 1024]
 		self.bi_lstm_apply_dropout = False
 
-		self.attention_fc_units = [self.intermidiate_ndim, 1]
-		self.attention_fc_activation_function = "elu"
+		self.attention_fc_units = [self.ndim_m, 1]
+		self.attention_fc_hidden_activation_function = "elu"
+		self.attention_fc_output_activation_function = None
 		self.attention_fc_apply_dropout = False
+
+		self.reader_fc_units = [self.ndim_g, self.ndim_char_embed]
+		self.reader_fc_hidden_activation_function = "elu"
+		self.reader_fc_output_activation_function = None
+		self.reader_fc_apply_dropout = False
 
 	def check(self):
 		if len(self.bi_lstm_units) < 1:
