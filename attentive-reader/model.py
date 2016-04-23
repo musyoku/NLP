@@ -117,14 +117,13 @@ class AttentiveReader:
 		forward_context = []
 		backward_context = []
 		for char in x_seq:
-			print char
-			char = Variable(xp.array([char], dtype=xp.int32).reshape(1, 1))
+			char = Variable(xp.array([char], dtype=xp.int32))
 			embed = self.char_embed(char)
 			y = self.forward_lstm(embed, test=test)
 			forward_context.append(y)
 
 		for char in x_seq[::-1]:
-			char = Variable(xp.array([char], dtype=xp.int32).reshape(1, 1))
+			char = Variable(xp.array([char], dtype=xp.int32))
 			embed = self.char_embed(char)
 			y = self.backward_lstm(embed, test=test)
 			backward_context.append(y)
@@ -136,10 +135,10 @@ class AttentiveReader:
 		attention_sum = 0
 		for t in xrange(length):
 			yd_t = concat_variables(forward_context[t], backward_context[length - t - 1])
-			m_t = F.tanh(f_ym(yd_t) + f_um(u))
-			s_t = attention_fc(m_t, test=False)
+			m_t = F.tanh(self.f_ym(yd_t) + self.f_um(u))
+			s_t = self.attention_fc(m_t, test=False)
 			attention_sum += s_t
-		print attention_sum
+		print attention_sum.data
 
 	@property
 	def xp(self):
@@ -150,39 +149,21 @@ class AttentiveReader:
 		self.backward_lstm.reset_state()
 
 	def train(self, x_seq, test=False):
-		self.reset_state()
-		xp = self.xp
-		n_batch = source_seq_batch.shape[0]
-		sum_loss = 0
-		summary = self.encode(source_seq_batch, test=test)
-		target_seq_batch = target_seq_batch.T
-		prev_y_onehot = Variable(xp.zeros((n_batch, config.n_vocab), dtype=xp.float32))
-		for i, target_y_ids in enumerate(target_seq_batch):
-			confidence_y = self.decode_one_step(summary, prev_y_onehot, test=test, softmax=False)
-			target_y = Variable(target_y_ids)
-			if xp is cuda.cupy:
-				target_y.to_gpu()
-			loss = F.softmax_cross_entropy(confidence_y, target_y)
-			sum_loss += loss
-			# CuPy does not support advanced indexing
-			prev_y_ids = target_y_ids
-			prev_y_ids[prev_y_ids == -1] = 0
-			prev_y_onehot = np.zeros(prev_y_onehot.data.shape, dtype=np.float32)
-			prev_y_onehot[np.arange(n_batch), prev_y_ids.astype(np.int32)] = 1
-			prev_y_onehot = Variable(prev_y_onehot)
-			if xp is cuda.cupy:
-				prev_y_onehot.to_gpu()
-
-		self.optimizer_char_embed.zero_grads()
-		self.optimizer_encoder_lstm.zero_grads()
-		self.optimizer_decoder_lstm.zero_grads()
-		self.optimizer_decoder_fc.zero_grads()
-		sum_loss.backward()
-		self.optimizer_char_embed.update()
-		self.optimizer_encoder_lstm.update()
-		self.optimizer_decoder_lstm.update()
-		self.optimizer_decoder_fc.update()
-		return sum_loss.data
+		length = len(x_seq)
+		for t in xrange(length - 1):
+			target = x_seq[t]
+			if t == 0:
+				latter = x_seq[1:]
+				print latter
+			elif t == length - 2:
+				former = x_seq[:t-1]
+				print former
+			else:
+				former = x_seq[:t]
+				latter = x_seq[t + 1:]
+				print former, latter
+		forward_context, backward_context = self.encode(x_seq, test=test)
+		self.attend(forward_context, backward_context, test=test)
 
 	def load(self, dir=None, name="ar"):
 		if dir is None:
@@ -219,7 +200,7 @@ def build():
 		forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 
 	forward_lstm = StackedLSTM(**forward_lstm_attributes)
-	forward_lstm.n_layers = len(forward_lstm_units) - 1
+	forward_lstm.n_layers = len(forward_lstm_units)
 	forward_lstm.apply_dropout = config.bi_lstm_apply_dropout
 
 	backward_lstm_attributes = {}
@@ -229,7 +210,7 @@ def build():
 		backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 
 	backward_lstm = StackedLSTM(**backward_lstm_attributes)
-	backward_lstm.n_layers = len(backward_lstm_units) - 1
+	backward_lstm.n_layers = len(backward_lstm_units)
 	backward_lstm.apply_dropout = config.bi_lstm_apply_dropout
 
 	char_embed = L.EmbedID(config.n_vocab, config.ndim_char_embed)
@@ -242,7 +223,7 @@ def build():
 	for i, (n_in, n_out) in enumerate(attention_fc_units):
 		attention_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 	attention_fc = FullyConnectedNetwork(**attention_fc_attributes)
-	attention_fc.n_layers = len(attention_fc_units) - 1
+	attention_fc.n_layers = len(attention_fc_units)
 	attention_fc.hidden_activation_function = config.attention_fc_hidden_activation_function
 	attention_fc.output_activation_function = config.attention_fc_output_activation_function
 	attention_fc.apply_dropout = config.attention_fc_apply_dropout
@@ -255,7 +236,7 @@ def build():
 	for i, (n_in, n_out) in enumerate(reader_fc_units):
 		reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 	reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
-	reader_fc.n_layers = len(reader_fc_units) - 1
+	reader_fc.n_layers = len(reader_fc_units)
 	reader_fc.hidden_activation_function = config.reader_fc_hidden_activation_function
 	reader_fc.output_activation_function = config.reader_fc_output_activation_function
 	reader_fc.apply_dropout = config.attention_fc_apply_dropout

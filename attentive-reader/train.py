@@ -21,7 +21,7 @@ for epoch in xrange(n_epoch):
 	for t in xrange(n_train):
 		k = np.random.randint(0, config.n_dataset)
 		data = dataset[k]
-		sum_loss += reader.train(source_batch, target_batch)
+		sum_loss += reader.train(data)
 		if t % 10 == 0:
 			sys.stdout.write("\rLearning in progress...(%d / %d)" % (t, n_train))
 			sys.stdout.flush()
