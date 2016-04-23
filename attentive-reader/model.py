@@ -44,49 +44,8 @@ class LSTM(chainer.Chain):
 	def __call__(self, x, test=False):
 		return self.forward_one_step(x, test=test)
 
-class FullyConnectedNetwork(chainer.Chain):
-	def __init__(self, **layers):
-		super(FullyConnectedNetwork, self).__init__(**layers)
-		self.n_hidden_layers = 0
-		self.activation_function = "elu"
-		self.apply_dropout = False
-		self.apply_batchnorm = False
-		self.apply_batchnorm_to_input = False
-		self.apply_batchnorm_to_output = False
-
-	def forward_one_step(self, x, test):
-		f = activations[self.activation_function]
-		chain = [x]
-
-		# Hidden layers
-		for i in range(self.n_hidden_layers):
-			u = chain[-1]
-			if i == 0:
-				if self.apply_batchnorm_to_input:
-					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
-			else:
-				if self.apply_batchnorm:
-					u = getattr(self, "batchnorm_%i" % i)(u, test=test)
-			u = getattr(self, "layer_%i" % i)(u)
-			output = f(u)
-			if self.apply_dropout:
-				output = F.dropout(output, train=not test)
-			chain.append(output)
-
-		# Output
-		u = chain[-1]
-		if self.apply_batchnorm_to_output:
-			u = getattr(self, "batchnorm_%i" % self.n_hidden_layers)(u, test=test)
-		u = getattr(self, "layer_%i" % self.n_hidden_layers)(u)
-		chain.append(f(u))
-
-		return chain[-1]
-
-	def __call__(self, x, test=False):
-		return self.forward_one_step(x, test=test)
-
 class Model:
-	def __init__(self, encoder_embed, encoder_lstm, decoder_lstm, decoder_fc):
+	def __init__(self, forward_lstm, backward_lstm, f_um, f_ym, f_ms, f_rg, f_ug):
 		self.encoder_embed = encoder_embed
 		self.optimizer_encoder_embed = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_encoder_embed.setup(self.encoder_embed)
@@ -268,20 +227,20 @@ def build():
 	config.check()
 	wscale = 1.0
 
-	enc_lstm_attributes = {}
-	enc_lstm_units = zip(config.enc_lstm_units[:-1], config.enc_lstm_units[1:])
+	forward_lstm_attributes = {}
+	forward_lstm_units = zip(config.bi_lstm_units[:-1], config.bi_lstm_units[1:])
 
-	for i, (n_in, n_out) in enumerate(enc_lstm_units):
-		enc_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
-		enc_lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
+	for i, (n_in, n_out) in enumerate(forward_lstm_units):
+		forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+		forward_lstm_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
 
-	enc_lstm = LSTM(**enc_lstm_attributes)
-	enc_lstm.n_layers = len(enc_lstm_units)
-	enc_lstm.apply_batchnorm = config.enc_lstm_apply_batchnorm
-	enc_lstm.apply_batchnorm_to_input = config.enc_lstm_apply_batchnorm_to_input
-	enc_lstm.apply_dropout = config.enc_lstm_apply_dropout
+	forward_lstm = LSTM(**forward_lstm_attributes)
+	forward_lstm.n_layers = len(forward_lstm_units) - 1
+	forward_lstm.apply_batchnorm = config.forward_lstm_apply_batchnorm
+	forward_lstm.apply_batchnorm_to_input = config.forward_lstm_apply_batchnorm_to_input
+	forward_lstm.apply_dropout = config.forward_lstm_apply_dropout
 	if config.use_gpu:
-		enc_lstm.to_gpu()
+		forward_lstm.to_gpu()
 
 	enc_embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
 	if config.use_gpu:
@@ -322,31 +281,31 @@ def build():
 
 	return Model(enc_embed, enc_lstm, dec_lstm, dec_fc)
 
-class Append(function.Function):
+class Concat(function.Function):
 	def check_type_forward(self, in_types):
 		n_in = in_types.size()
 		type_check.expect(n_in == 2)
-		summary_type, prev_y_type = in_types
+		a_type, b_type = in_types
 
 		type_check.expect(
-			summary_type.dtype == np.float32,
-			prev_y_type.dtype == np.float32,
-			summary_type.ndim == 2,
-			prev_y_type.ndim == 2,
+			a_type.dtype == np.float32,
+			b_type.dtype == np.float32,
+			a_type.ndim == 2,
+			b_type.ndim == 2,
 		)
 
 	def forward(self, inputs):
 		xp = cuda.get_array_module(inputs[0])
-		summary, prev_y = inputs
-		n_batch = summary.shape[0]
-		output = xp.empty((n_batch, summary.shape[1] + prev_y.shape[1]), dtype=xp.float32)
-		output[:,:summary.shape[1]] = summary
-		output[:,summary.shape[1]:] = prev_y
+		v_a, v_b = inputs
+		n_batch = v_a.shape[0]
+		output = xp.empty((n_batch, v_a.shape[1] + v_b.shape[1]), dtype=xp.float32)
+		output[:,:v_a.shape[1]] = v_a
+		output[:,v_a.shape[1]:] = v_b
 		return output,
 
 	def backward(self, inputs, grad_outputs):
-		summary, prev_y = inputs
-		return grad_outputs[0][:,:summary.shape[1]], grad_outputs[0][:,summary.shape[1]:]
+		v_a, v_b = inputs
+		return grad_outputs[0][:,:v_a.shape[1]], grad_outputs[0][:,v_a.shape[1]:]
 
-def append_variable(summary, prev_y):
-	return Append()(summary, prev_y)
+def concat_variables(v_a, v_b):
+	return Concat()(v_a, v_b)

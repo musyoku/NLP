@@ -9,10 +9,10 @@ class Config(object):
 		self.gradient_momentum = 0.95
 		self.n_vocab = -1
 
-		self.char_embed_size = 200
-		self.representation_size = 400
+		self.char_embed_ndim = 200
+		self.representation_ndim = 400
 
-		self.bi_lstm_units = [self.embed_size, 768]
+		self.bi_lstm_units = [self.char_embed_ndim, 1024]
 		self.bi_lstm_apply_batchnorm = False
 		self.bi_lstm_apply_batchnorm_to_input = False
 		self.bi_lstm_apply_dropout = False
