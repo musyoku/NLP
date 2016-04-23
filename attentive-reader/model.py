@@ -8,7 +8,6 @@ from chainer import functions as F
 from chainer import links as L
 from config import config
 from activations import activations
-import model
 
 class LSTM(chainer.Chain):
 	def __init__(self, **layers):
