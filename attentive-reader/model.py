@@ -64,27 +64,52 @@ class FullyConnectedNetwork(chainer.Chain):
 	def __call__(self, x, test=False):
 		return self.forward_one_step(x, test=test)
 
-class Model:
-	def __init__(self, encoder_embed, forward_lstm, backward_lstm, f_um, f_ym, attention_fc, f_rg, f_ug):
-		self.encoder_embed = encoder_embed
-		self.optimizer_encoder_embed = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
-		self.optimizer_encoder_embed.setup(self.encoder_embed)
-		self.optimizer_encoder_embed.add_hook(chainer.optimizer.GradientClipping(10.0))
+class AttentiveReader:
+	def __init__(self, char_embed, forward_lstm, backward_lstm, f_um, f_ym, attention_fc, f_rg, f_ug, reader_fc):
+		self.char_embed = char_embed
+		self.optimizer_char_embed = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_char_embed.setup(self.char_embed)
+		self.optimizer_char_embed.add_hook(chainer.optimizer.GradientClipping(10.0))
 
-		self.encoder_lstm = encoder_lstm
-		self.optimizer_encoder_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
-		self.optimizer_encoder_lstm.setup(self.encoder_lstm)
-		self.optimizer_encoder_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.forward_lstm = forward_lstm
+		self.optimizer_forward_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_forward_lstm.setup(self.forward_lstm)
+		self.optimizer_forward_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
 
-		self.decoder_lstm = decoder_lstm
-		self.optimizer_decoder_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
-		self.optimizer_decoder_lstm.setup(self.decoder_lstm)
-		self.optimizer_decoder_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.backward_lstm = backward_lstm
+		self.optimizer_backward_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_backward_lstm.setup(self.backward_lstm)
+		self.optimizer_backward_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
 
-		self.decoder_fc = decoder_fc
-		self.optimizer_decoder_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
-		self.optimizer_decoder_fc.setup(self.decoder_fc)
-		self.optimizer_decoder_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.f_um = f_um
+		self.optimizer_f_um = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_f_um.setup(self.f_um)
+		self.optimizer_f_um.add_hook(chainer.optimizer.GradientClipping(10.0))
+		
+		self.f_ym = f_ym
+		self.optimizer_f_ym = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_f_ym.setup(self.f_ym)
+		self.optimizer_f_ym.add_hook(chainer.optimizer.GradientClipping(10.0))
+		
+		self.attention_fc = attention_fc
+		self.optimizer_attention_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_attention_fc.setup(self.attention_fc)
+		self.optimizer_attention_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+		
+		self.f_rg = f_rg
+		self.optimizer_f_rg = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_f_rg.setup(self.f_rg)
+		self.optimizer_f_rg.add_hook(chainer.optimizer.GradientClipping(10.0))
+		
+		self.f_ug = f_ug
+		self.optimizer_f_ug = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_f_ug.setup(self.f_ug)
+		self.optimizer_f_ug.add_hook(chainer.optimizer.GradientClipping(10.0))
+		
+		self.reader_fc = reader_fc
+		self.optimizer_reader_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
+		self.optimizer_reader_fc.setup(self.reader_fc)
+		self.optimizer_reader_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
 
 	# Inputs:	Numpy / CuPy
 	# Returns:	Variable
@@ -95,7 +120,7 @@ class Model:
 		for i, cur_x in enumerate(x_seq_batch):
 			cur_x[cur_x == -1] = 0
 			cur_x = Variable(xp.asanyarray(cur_x, dtype=np.int32))
-			embed = self.encoder_embed(cur_x)
+			embed = self.char_embed(cur_x)
 			output = self.encoder_lstm(embed, test=test)
 		return output
 
@@ -177,71 +202,34 @@ class Model:
 			if xp is cuda.cupy:
 				prev_y_onehot.to_gpu()
 
-		self.optimizer_encoder_embed.zero_grads()
+		self.optimizer_char_embed.zero_grads()
 		self.optimizer_encoder_lstm.zero_grads()
 		self.optimizer_decoder_lstm.zero_grads()
 		self.optimizer_decoder_fc.zero_grads()
 		sum_loss.backward()
-		self.optimizer_encoder_embed.update()
+		self.optimizer_char_embed.update()
 		self.optimizer_encoder_lstm.update()
 		self.optimizer_decoder_lstm.update()
 		self.optimizer_decoder_fc.update()
 		return sum_loss.data
 
-	def load(self, dir=None, name="encoder_lstm"):
+	def load(self, dir=None, name="ar"):
 		if dir is None:
 			raise Exception()
-		filename = dir + "/%s_decoder_fc.model" % name
+		filename = dir + "/%s.model" % name
 		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.decoder_fc)
-			print filename, "loaded."
-		filename = dir + "/%s_decoder_lstm.model" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.decoder_lstm)
-			print filename, "loaded."
-		filename = dir + "/%s_encoder_embed.model" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.encoder_embed)
-			print filename, "loaded."
-		filename = dir + "/%s_encoder_lstm.model" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.encoder_lstm)
-			print filename, "loaded."
-		filename = dir + "/%s_decoder_fc.optimizer" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.optimizer_decoder_fc)
-			print filename, "loaded."
-		filename = dir + "/%s_decoder_lstm.optimizer" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.optimizer_decoder_lstm)
-			print filename, "loaded."
-		filename = dir + "/%s_encoder_embed.optimizer" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.optimizer_encoder_embed)
-			print filename, "loaded."
-		filename = dir + "/%s_encoder_lstm.optimizer" % name
-		if os.path.isfile(filename):
-			serializers.load_hdf5(filename, self.optimizer_encoder_lstm)
+			serializers.load_hdf5(filename, self)
 			print filename, "loaded."
 
-	def save(self, dir=None, name="encoder_lstm"):
+	def save(self, dir=None, name="ar"):
 		if dir is None:
 			raise Exception()
 		try:
 			os.mkdir(dir)
 		except:
 			pass
-		serializers.save_hdf5(dir + "/%s_decoder_fc.model" % name, self.decoder_fc)
-		serializers.save_hdf5(dir + "/%s_decoder_lstm.model" % name, self.decoder_lstm)
-		serializers.save_hdf5(dir + "/%s_encoder_embed.model" % name, self.encoder_embed)
-		serializers.save_hdf5(dir + "/%s_encoder_lstm.model" % name, self.encoder_lstm)
+		serializers.save_hdf5(dir + "/%s.model" % name, self.decoder_fc)
 		print "model saved."
-		serializers.save_hdf5(dir + "/%s_decoder_fc.optimizer" % name, self.optimizer_decoder_fc)
-		serializers.save_hdf5(dir + "/%s_decoder_lstm.optimizer" % name, self.optimizer_decoder_lstm)
-		serializers.save_hdf5(dir + "/%s_encoder_embed.optimizer" % name, self.optimizer_encoder_embed)
-		serializers.save_hdf5(dir + "/%s_encoder_lstm.optimizer" % name, self.optimizer_encoder_lstm)
-		print "optimizer saved."
-
 
 def build():
 	config.check()
@@ -271,7 +259,7 @@ def build():
 	backward_lstm.apply_batchnorm_to_input = config.backward_lstm_apply_batchnorm_to_input
 	backward_lstm.apply_dropout = config.backward_lstm_apply_dropout
 
-	embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
+	char_embed = L.EmbedID(config.n_vocab, config.enc_lstm_units[0])
 
 	f_ym = L.linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
 	f_um = L.linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
@@ -294,7 +282,7 @@ def build():
 	for i, (n_in, n_out) in enumerate(reader_fc_units):
 		reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 	reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
-	reader_fc.n_layers = len(attention_fc_units) - 1
+	reader_fc.n_layers = len(reader_fc_units) - 1
 	reader_fc.hidden_activation_function = config.reader_fc_hidden_activation_function
 	reader_fc.output_activation_function = config.reader_fc_output_activation_function
 	reader_fc.apply_dropout = config.attention_fc_apply_dropout
@@ -302,14 +290,15 @@ def build():
 	if config.use_gpu:
 		forward_lstm.to_gpu()
 		backward_lstm.to_gpu()
-		embed.to_gpu()
+		char_embed.to_gpu()
 		attention_fc.to_gpu()
+		reader_fc.to_gpu()
 		f_ym.to_gpu()
 		f_um.to_gpu()
 		f_rg.to_gpu()
-		f_um.to_gpu()
+		f_ug.to_gpu()
 
-	return Model(embed, enc_lstm, attention_lstm, dec_fc)
+	return AttentiveReader(char_embed, forward_lstm, backward_lstm, f_um, f_ym, attention_fc, f_rg, f_ug, reader_fc)
 
 class Concat(function.Function):
 	def check_type_forward(self, in_types):
