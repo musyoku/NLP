@@ -193,7 +193,6 @@ class AttentiveReader:
 			if latter_context is not None:
 				for t in xrange(len(latter_context)):
 					representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
-			print representation.data
 
 
 	def load(self, dir=None, name="ar"):
