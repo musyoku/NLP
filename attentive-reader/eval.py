@@ -6,6 +6,8 @@ import seaborn as sns
 import model
 import vocab
 from config import config
+import matplotlib.font_manager
+fontprop = matplotlib.font_manager.FontProperties(fname="NotoSansJP-Medium.otf")
 
 sns.set()
 
@@ -25,15 +27,15 @@ def sample_data():
 
 for repeat in xrange(1):
 	data = sample_data()
-	df_attention = pd.DataFrame(columns=["t", "character", "weight"])
+	df_attention = pd.DataFrame(columns=["t", "character", "weight", "phrase"])
 	for pos in xrange(len(data)):
 		weight, predicted_char_embed = reader.forward_one_step(data, pos, test=True)
 		onehot = reader.inverse_embed(predicted_char_embed.data[0])
 		predicted_char = np.argmax(onehot)
 		for t in xrange(len(data)):
-			df_attention = df_attention.append([{"t": pos, "character": data[t], "weight": weight[0, t]}], ignore_index=True)
-	df_attention_pivot = pd.pivot_table(data=df_attention, values="weight", columns="t", index="character", aggfunc=np.mean)
+			df_attention = df_attention.append([{"t": pos, "character": vocab.id_to_word(data[t]), "weight": weight[0, t], "phrase": t}], ignore_index=True)
+	df_attention_pivot = pd.pivot_table(data=df_attention, values="weight", columns="t", index="phrase", aggfunc=np.mean)
 	pylab.figure(figsize=(12, 9))
-	sns.heatmap(df_attention_pivot, annot=False, fmt="g", cmap="Blues")
-	pylab.yticks(rotation=0) 
+	ax = sns.heatmap(df_attention_pivot, annot=False, fmt="d", cmap="Blues")
+	ax.set_yticklabels(df_attention[df_attention.t == 0]["character"], rotation=0, va="baseline")
 	pylab.show()
