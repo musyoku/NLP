@@ -12,7 +12,7 @@ reader = model.build()
 reader.load(model_dir)
 
 n_epoch = 1000
-n_train = config.n_dataset
+n_train = config.n_dataset * 10
 total_time = 0
 
 for epoch in xrange(n_epoch):
@@ -28,8 +28,6 @@ for epoch in xrange(n_epoch):
 	elapsed_time = time.time() - start_time
 	total_time += elapsed_time
 	sys.stdout.write("\r")
-	print "epoch:", epoch, "loss:", sum_loss / float(n_train), "time:", int(elapsed_time / 60), "min", "total_time:", int(total_time / 60), "min", "current_length_limit:", current_length_limit
+	print "epoch:", epoch, "loss:", sum_loss / float(n_train), "time:", int(elapsed_time / 60), "min", "total_time:", int(total_time / 60), "min"
 	sys.stdout.flush()
-	lm.save(model_dir)
-	if epoch % 10 == 0 and epoch != 0:
-		current_length_limit = (current_length_limit + 5) if current_length_limit < max_length_of_chars else max_length_of_chars
+	reader.save(model_dir)

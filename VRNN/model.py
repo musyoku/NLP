@@ -89,6 +89,33 @@ class FullyConnectedNetwork(chainer.Chain):
 	def __call__(self, x, test=False):
 		return self.forward_one_step(x, test=test)
 
+def _sum_sqnorm(arr):
+	sq_sum = collections.defaultdict(float)
+	for x in arr:
+		with cuda.get_device(x) as dev:
+			x = x.ravel()
+			s = x.dot(x)
+			sq_sum[int(dev)] += s
+	return sum([float(i) for i in six.itervalues(sq_sum)])
+	
+class GradientClipping(object):
+	name = 'GradientClipping'
+
+	def __init__(self, threshold):
+		self.threshold = threshold
+
+	def __call__(self, opt):
+		norm = np.sqrt(_sum_sqnorm([p.grad for p in opt.target.params()]))
+		print norm
+		if norm == 0:
+			norm = 1
+		rate = self.threshold / norm
+		if rate < 1:
+			for param in opt.target.params():
+				grad = param.grad
+				with cuda.get_device(grad):
+					grad *= rate
+
 class Model:
 	def __init__(self, lstm, fc):
 		self.lstm = lstm

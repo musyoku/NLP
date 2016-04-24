@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, time, re
+import os, time, re, collections, six
 import numpy as np
 import chainer
 from chainer import cuda, Variable, optimizers, serializers, function, link
@@ -64,52 +64,78 @@ class FullyConnectedNetwork(chainer.Chain):
 	def __call__(self, x, test=False):
 		return self.forward_one_step(x, test=test)
 
+def _sum_sqnorm(arr):
+	sq_sum = collections.defaultdict(float)
+	for x in arr:
+		with cuda.get_device(x) as dev:
+			x = x.ravel()
+			s = x.dot(x)
+			sq_sum[int(dev)] += s
+	return sum([float(i) for i in six.itervalues(sq_sum)])
+	
+class GradientClipping(object):
+	name = 'GradientClipping'
+
+	def __init__(self, threshold):
+		self.threshold = threshold
+
+	def __call__(self, opt):
+		norm = np.sqrt(_sum_sqnorm([p.grad for p in opt.target.params()]))
+		if norm == 0:
+			norm = 1
+		rate = self.threshold / norm
+		if rate < 1:
+			for param in opt.target.params():
+				grad = param.grad
+				with cuda.get_device(grad):
+					grad *= rate
+
 class AttentiveReader:
 	def __init__(self, char_embed, forward_lstm, backward_lstm, f_um, f_ym, attention_fc, f_rg, f_ug, reader_fc):
 		self.char_embed = char_embed
 		self.optimizer_char_embed = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_char_embed.setup(self.char_embed)
-		self.optimizer_char_embed.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_char_embed.add_hook(GradientClipping(10.0))
 
 		self.forward_lstm = forward_lstm
 		self.optimizer_forward_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_forward_lstm.setup(self.forward_lstm)
-		self.optimizer_forward_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_forward_lstm.add_hook(GradientClipping(10.0))
 
 		self.backward_lstm = backward_lstm
 		self.optimizer_backward_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_backward_lstm.setup(self.backward_lstm)
-		self.optimizer_backward_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_backward_lstm.add_hook(GradientClipping(10.0))
 
 		self.f_um = f_um
 		self.optimizer_f_um = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_um.setup(self.f_um)
-		self.optimizer_f_um.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_f_um.add_hook(GradientClipping(10.0))
 		
 		self.f_ym = f_ym
 		self.optimizer_f_ym = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_ym.setup(self.f_ym)
-		self.optimizer_f_ym.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_f_ym.add_hook(GradientClipping(10.0))
 		
 		self.attention_fc = attention_fc
 		self.optimizer_attention_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_attention_fc.setup(self.attention_fc)
-		self.optimizer_attention_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_attention_fc.add_hook(GradientClipping(10.0))
 		
 		self.f_rg = f_rg
 		self.optimizer_f_rg = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_rg.setup(self.f_rg)
-		self.optimizer_f_rg.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_f_rg.add_hook(GradientClipping(10.0))
 		
 		self.f_ug = f_ug
 		self.optimizer_f_ug = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_ug.setup(self.f_ug)
-		self.optimizer_f_ug.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_f_ug.add_hook(GradientClipping(10.0))
 		
 		self.reader_fc = reader_fc
 		self.optimizer_reader_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_reader_fc.setup(self.reader_fc)
-		self.optimizer_reader_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_reader_fc.add_hook(GradientClipping(10.0))
 
 	def encode(self, x_seq, test=False):
 		self.reset_state()
@@ -133,8 +159,8 @@ class AttentiveReader:
 		for t in xrange(length):
 			yd_t = concat_variables(forward_context[t], backward_context[length - t - 1])
 			context.append(yd_t)
-		u = concat_variables(forward_context[-1], backward_context[-1])
-		return context, u
+		encode = concat_variables(forward_context[-1], backward_context[-1])
+		return context, encode
 
 	def attend(self, context, encode, test=False):
 		length = len(context)
@@ -142,7 +168,10 @@ class AttentiveReader:
 		weights = []
 		for t in xrange(length):
 			yd_t = context[t]
-			m_t = F.tanh(self.f_ym(yd_t) + self.f_um(encode))
+			if encode is None:
+				m_t = F.tanh(self.f_ym(yd_t))
+			else:
+				m_t = F.tanh(self.f_ym(yd_t) + self.f_um(encode))
 			s_t = F.exp(self.attention_fc(m_t, test=False))
 			weights.append(s_t)
 			attention_sum += s_t
@@ -157,9 +186,12 @@ class AttentiveReader:
 		self.backward_lstm.reset_state()
 
 	def train(self, x_seq, test=False):
+		xp = self.xp
+		x_seq = xp.asanyarray(x_seq)
 		length = len(x_seq)
+		sum_loss = 0
 		for pos in xrange(length):
-			target = x_seq[pos]
+			target_char = x_seq[pos]
 			former = None
 			latter = None
 			attention_sum = 0
@@ -168,7 +200,6 @@ class AttentiveReader:
 				latter = x_seq[1:]
 			elif pos == length - 1:
 				former = x_seq[:pos]
-				print former
 			else:
 				former = x_seq[:pos]
 				latter = x_seq[pos + 1:]
@@ -194,6 +225,32 @@ class AttentiveReader:
 				for t in xrange(len(latter_context)):
 					representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
 
+			g = self.f_rg(representation)
+			predicted_char_embed = self.reader_fc(g)
+			target_char_embed = self.char_embed(Variable(xp.asarray([target_char], dtype=xp.int32)))
+			loss = F.mean_squared_error(predicted_char_embed, target_char_embed)
+			sum_loss += loss
+
+		self.zero_grads()
+		sum_loss.backward()
+		self.update()
+
+		if xp is cuda.cupy:
+			sum_loss.to_cpu()
+
+		return sum_loss.data
+
+	def zero_grads(self):
+		for attr in vars(self):
+			prop = getattr(self, attr)
+			if isinstance(prop, chainer.optimizer.GradientMethod):
+				prop.zero_grads()
+
+	def update(self):
+		for attr in vars(self):
+			prop = getattr(self, attr)
+			if isinstance(prop, chainer.optimizer.GradientMethod):
+				prop.update()
 
 	def load(self, dir=None, name="ar"):
 		if dir is None:
@@ -204,7 +261,9 @@ class AttentiveReader:
 				filename = dir + "/%s.hdf5" % attr
 				if os.path.isfile(filename):
 					serializers.load_hdf5(filename, prop)
-					print attr, "loaded."
+				else:
+					print filename, "missing."
+		print "model loaded."
 
 	def save(self, dir=None):
 		if dir is None:
@@ -217,7 +276,7 @@ class AttentiveReader:
 			prop = getattr(self, attr)
 			if isinstance(prop, chainer.Chain) or isinstance(prop, L.Linear) or isinstance(prop, L.EmbedID) or isinstance(prop, chainer.optimizer.GradientMethod):
 				serializers.save_hdf5(dir + "/%s.hdf5" % attr, prop)
-				print attr, "saved."
+		print "model saved."
 
 def build():
 	config.check()
@@ -258,8 +317,8 @@ def build():
 	attention_fc.output_activation_function = config.attention_fc_output_activation_function
 	attention_fc.apply_dropout = config.attention_fc_apply_dropout
 		
-	f_rg = L.Linear(config.ndim_m, config.ndim_g, nobias=True)
-	f_ug = L.Linear(config.ndim_m, config.ndim_g, nobias=True)
+	f_rg = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_g, nobias=True)
+	f_ug = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_g, nobias=True)
 
 	reader_fc_attributes = {}
 	reader_fc_units = zip(config.reader_fc_units[:-1], config.reader_fc_units[1:])
