@@ -185,49 +185,78 @@ class AttentiveReader:
 		self.forward_lstm.reset_state()
 		self.backward_lstm.reset_state()
 
-	def train(self, x_seq, test=False):
+	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True):
+		self.reset_state()
 		xp = self.xp
 		x_seq = xp.asanyarray(x_seq)
 		length = len(x_seq)
 		sum_loss = 0
-		for pos in xrange(length):
+		target_char = x_seq[pos]
+		former = None
+		latter = None
+		attention_sum = 0
+
+		if pos == 0:
+			latter = x_seq[1:]
+		elif pos == length - 1:
+			former = x_seq[:pos]
+		else:
+			former = x_seq[:pos]
+			latter = x_seq[pos + 1:]
+
+		former_context = None
+		latter_context = None
+		former_attention_weight = None
+		latter_attention_weight = None
+
+		if former is not None:
+			former_context, former_encode = self.encode(former, test=test)
+			former_attention_weight, former_attention_sum = self.attend(former_context, former_encode, test=test)
+			attention_sum += former_attention_sum
+		if latter is not None:
+			latter_context, latter_encode = self.encode(latter, test=test)
+			latter_attention_weight, latter_attention_sum = self.attend(latter_context, latter_encode, test=test)
+			attention_sum += latter_attention_sum
+
+		representation = 0
+
+		if former_context is not None:
+			for t in xrange(len(former_context)):
+				representation += apply_attention(former_context[t], former_attention_weight[t] / attention_sum)
+		if latter_context is not None:
+			for t in xrange(len(latter_context)):
+				representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
+
+		g = self.f_rg(representation)
+		predicted_char_embed = self.reader_fc(g)
+
+		if concat_weight:
+			batchsize = 1
+			weight = xp.zeros((batchsize, length), dtype=xp.float32)
+			index = 0
+			if former_attention_weight is not None:
+				for i in xrange(len(former_attention_weight)):
+					index = i
+					weight[:, i] = former_attention_weight[i].data
+			if latter_attention_weight is not None:
+				for i in xrange(len(latter_attention_weight)):
+					weight[:, index + i + 1] = latter_attention_weight[i].data
+			weight /= attention_sum.data
+			if xp is cuda.cupy:
+				weight = cuda.to_cpu(weight)
+			return weight, predicted_char_embed
+		else:
+			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_embed
+
+
+	def train(self, x_seq, test=False):
+		xp = self.xp
+		x_seq = xp.asanyarray(x_seq)
+		sum_loss = 0
+		for pos in xrange(len(x_seq)):
 			target_char = x_seq[pos]
-			former = None
-			latter = None
-			attention_sum = 0
-
-			if pos == 0:
-				latter = x_seq[1:]
-			elif pos == length - 1:
-				former = x_seq[:pos]
-			else:
-				former = x_seq[:pos]
-				latter = x_seq[pos + 1:]
-
-			former_context = None
-			latter_context = None
-
-			if former is not None:
-				former_context, former_encode = self.encode(former, test=test)
-				former_attention_weight, former_attention_sum = self.attend(former_context, former_encode, test=test)
-				attention_sum += former_attention_sum
-			if latter is not None:
-				latter_context, latter_encode = self.encode(latter, test=test)
-				latter_attention_weight, latter_attention_sum = self.attend(latter_context, latter_encode, test=test)
-				attention_sum += latter_attention_sum
-
-			representation = 0
-
-			if former_context is not None:
-				for t in xrange(len(former_context)):
-					representation += apply_attention(former_context[t], former_attention_weight[t] / attention_sum)
-			if latter_context is not None:
-				for t in xrange(len(latter_context)):
-					representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
-
-			g = self.f_rg(representation)
-			predicted_char_embed = self.reader_fc(g)
 			target_char_embed = self.char_embed(Variable(xp.asarray([target_char], dtype=xp.int32)))
+			_, predicted_char_embed = self.forward_one_step(x_seq, pos, test=test)
 			loss = F.mean_squared_error(predicted_char_embed, target_char_embed)
 			sum_loss += loss
 
@@ -251,6 +280,14 @@ class AttentiveReader:
 			prop = getattr(self, attr)
 			if isinstance(prop, chainer.optimizer.GradientMethod):
 				prop.update()
+
+	def inverse_embed(self, embed):
+		if self.xp is cuda.cupy:
+			embed = cuda.to_gpu(embed)
+		onehot = self.char_embed.W.data.dot(embed.reshape(-1, 1))
+		if self.xp is cuda.cupy:
+			onehot = cuda.to_cpu(onehot)
+		return onehot
 
 	def load(self, dir=None, name="ar"):
 		if dir is None:
