@@ -42,6 +42,7 @@ for repeat in xrange(20):
 	num_correct = 0
 	for pos in xrange(length):
 		weight, predicted_char_embed = reader.forward_one_step(data, pos, test=True)
+		print weight
 		onehot = reader.inverse_embed(predicted_char_embed.data[0])
 		predicted_char = np.argmax(onehot)
 		if predicted_char == data[pos]:
