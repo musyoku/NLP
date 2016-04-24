@@ -14,7 +14,7 @@ sns.set()
 # Windowsでprintする用
 sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharrefreplace")
 
-data_dir = "debug"
+data_dir = "alice"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
 reader = model.build()
