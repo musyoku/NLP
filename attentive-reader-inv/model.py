@@ -171,7 +171,7 @@ class AttentiveReader:
 			if encode is None:
 				m_t = F.tanh(self.f_ym(yd_t))
 			else:
-				m_t = F.tanh(self.f_ym(yd_t) + self.f_um(encode))
+				m_t = F.tanh(self.f_ym(yd_t))
 			s_t = F.exp(self.attention_fc(m_t, test=False))
 			weights.append(s_t)
 			attention_sum += s_t
@@ -208,14 +208,19 @@ class AttentiveReader:
 		latter_context = None
 		former_attention_weight = None
 		latter_attention_weight = None
+		former_encode = None
+		latter_encode = None
 
 		if former is not None:
 			former_context, former_encode = self.encode(former, test=test)
-			former_attention_weight, former_attention_sum = self.attend(former_context, former_encode, test=test)
-			attention_sum += former_attention_sum
 		if latter is not None:
 			latter_context, latter_encode = self.encode(latter, test=test)
-			latter_attention_weight, latter_attention_sum = self.attend(latter_context, latter_encode, test=test)
+
+		if former is not None:
+			former_attention_weight, former_attention_sum = self.attend(former_context, latter_encode, test=test)
+			attention_sum += former_attention_sum
+		if latter is not None:
+			latter_attention_weight, latter_attention_sum = self.attend(latter_context, former_encode, test=test)
 			attention_sum += latter_attention_sum
 
 		representation = 0
