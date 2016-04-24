@@ -238,6 +238,7 @@ class AttentiveReader:
 				for i in xrange(len(former_attention_weight)):
 					index = i
 					weight[:, i] = former_attention_weight[i].data
+				index += 1
 			if latter_attention_weight is not None:
 				for i in xrange(len(latter_attention_weight)):
 					weight[:, index + i + 1] = latter_attention_weight[i].data
