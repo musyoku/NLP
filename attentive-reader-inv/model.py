@@ -171,6 +171,7 @@ class AttentiveReader:
 			if encode is None:
 				m_t = F.tanh(self.f_ym(yd_t))
 			else:
+				# m_t = F.tanh(self.f_ym(yd_t) + self.f_um(encode))
 				m_t = F.tanh(self.f_ym(yd_t))
 			s_t = F.exp(self.attention_fc(m_t, test=False))
 			weights.append(s_t)
