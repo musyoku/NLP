@@ -91,48 +91,101 @@ class GradientClipping(object):
 					grad *= rate
 
 class AttentiveReader:
-	def __init__(self, char_embed, forward_lstm, backward_lstm, f_um, f_ym, attention_fc, f_rg, f_ug, reader_fc):
-		self.char_embed = char_embed
+	def __init__(self):
+		config.check()
+		wscale = 1.0
+
+		forward_lstm_attributes = {}
+		forward_lstm_units = zip(config.bi_lstm_units[:-1], config.bi_lstm_units[1:])
+
+		for i, (n_in, n_out) in enumerate(forward_lstm_units):
+			forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+
+		self.forward_lstm = StackedLSTM(**forward_lstm_attributes)
+		self.forward_lstm.n_layers = len(forward_lstm_units)
+		self.forward_lstm.apply_dropout = config.bi_lstm_apply_dropout
+
+		backward_lstm_attributes = {}
+		backward_lstm_units = zip(config.bi_lstm_units[:-1], config.bi_lstm_units[1:])
+
+		for i, (n_in, n_out) in enumerate(backward_lstm_units):
+			backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+
+		self.backward_lstm = StackedLSTM(**backward_lstm_attributes)
+		self.backward_lstm.n_layers = len(backward_lstm_units)
+		self.backward_lstm.apply_dropout = config.bi_lstm_apply_dropout
+
+		self.char_embed = L.EmbedID(config.n_vocab, config.ndim_char_embed)
+
+		self.f_ym = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
+		self.f_um = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
+
+		attention_fc_attributes = {}
+		attention_fc_units = zip(config.attention_fc_units[:-1], config.attention_fc_units[1:])
+		for i, (n_in, n_out) in enumerate(attention_fc_units):
+			attention_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+		self.attention_fc = FullyConnectedNetwork(**attention_fc_attributes)
+		self.attention_fc.n_layers = len(attention_fc_units)
+		self.attention_fc.hidden_activation_function = config.attention_fc_hidden_activation_function
+		self.attention_fc.output_activation_function = config.attention_fc_output_activation_function
+		self.attention_fc.apply_dropout = config.attention_fc_apply_dropout
+			
+		self.f_rg = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_g, nobias=True)
+		self.f_ug = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_g, nobias=True)
+
+		reader_fc_attributes = {}
+		reader_fc_units = zip(config.reader_fc_units[:-1], config.reader_fc_units[1:])
+		for i, (n_in, n_out) in enumerate(reader_fc_units):
+			reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+		self.reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
+		self.reader_fc.n_layers = len(reader_fc_units)
+		self.reader_fc.hidden_activation_function = config.reader_fc_hidden_activation_function
+		self.reader_fc.output_activation_function = config.reader_fc_output_activation_function
+		self.reader_fc.apply_dropout = config.attention_fc_apply_dropout
+
+		if config.use_gpu:
+			self.forward_lstm.to_gpu()
+			self.backward_lstm.to_gpu()
+			self.char_embed.to_gpu()
+			self.attention_fc.to_gpu()
+			self.reader_fc.to_gpu()
+			self.f_ym.to_gpu()
+			self.f_um.to_gpu()
+			self.f_rg.to_gpu()
+			self.f_ug.to_gpu()
+
 		self.optimizer_char_embed = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_char_embed.setup(self.char_embed)
 		self.optimizer_char_embed.add_hook(GradientClipping(10.0))
 
-		self.forward_lstm = forward_lstm
 		self.optimizer_forward_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_forward_lstm.setup(self.forward_lstm)
 		self.optimizer_forward_lstm.add_hook(GradientClipping(10.0))
 
-		self.backward_lstm = backward_lstm
 		self.optimizer_backward_lstm = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_backward_lstm.setup(self.backward_lstm)
 		self.optimizer_backward_lstm.add_hook(GradientClipping(10.0))
 
-		self.f_um = f_um
 		self.optimizer_f_um = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_um.setup(self.f_um)
 		self.optimizer_f_um.add_hook(GradientClipping(10.0))
 		
-		self.f_ym = f_ym
 		self.optimizer_f_ym = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_ym.setup(self.f_ym)
 		self.optimizer_f_ym.add_hook(GradientClipping(10.0))
 		
-		self.attention_fc = attention_fc
 		self.optimizer_attention_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_attention_fc.setup(self.attention_fc)
 		self.optimizer_attention_fc.add_hook(GradientClipping(10.0))
 		
-		self.f_rg = f_rg
 		self.optimizer_f_rg = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_rg.setup(self.f_rg)
 		self.optimizer_f_rg.add_hook(GradientClipping(10.0))
 		
-		self.f_ug = f_ug
 		self.optimizer_f_ug = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_f_ug.setup(self.f_ug)
 		self.optimizer_f_ug.add_hook(GradientClipping(10.0))
 		
-		self.reader_fc = reader_fc
 		self.optimizer_reader_fc = optimizers.Adam(alpha=config.learning_rate, beta1=config.gradient_momentum)
 		self.optimizer_reader_fc.setup(self.reader_fc)
 		self.optimizer_reader_fc.add_hook(GradientClipping(10.0))
@@ -317,71 +370,6 @@ class AttentiveReader:
 			if isinstance(prop, chainer.Chain) or isinstance(prop, L.Linear) or isinstance(prop, L.EmbedID) or isinstance(prop, chainer.optimizer.GradientMethod):
 				serializers.save_hdf5(dir + "/%s.hdf5" % attr, prop)
 		print "model saved."
-
-def build():
-	config.check()
-	wscale = 1.0
-
-	forward_lstm_attributes = {}
-	forward_lstm_units = zip(config.bi_lstm_units[:-1], config.bi_lstm_units[1:])
-
-	for i, (n_in, n_out) in enumerate(forward_lstm_units):
-		forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
-
-	forward_lstm = StackedLSTM(**forward_lstm_attributes)
-	forward_lstm.n_layers = len(forward_lstm_units)
-	forward_lstm.apply_dropout = config.bi_lstm_apply_dropout
-
-	backward_lstm_attributes = {}
-	backward_lstm_units = zip(config.bi_lstm_units[:-1], config.bi_lstm_units[1:])
-
-	for i, (n_in, n_out) in enumerate(backward_lstm_units):
-		backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
-
-	backward_lstm = StackedLSTM(**backward_lstm_attributes)
-	backward_lstm.n_layers = len(backward_lstm_units)
-	backward_lstm.apply_dropout = config.bi_lstm_apply_dropout
-
-	char_embed = L.EmbedID(config.n_vocab, config.ndim_char_embed)
-
-	f_ym = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
-	f_um = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_m, nobias=True)
-
-	attention_fc_attributes = {}
-	attention_fc_units = zip(config.attention_fc_units[:-1], config.attention_fc_units[1:])
-	for i, (n_in, n_out) in enumerate(attention_fc_units):
-		attention_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-	attention_fc = FullyConnectedNetwork(**attention_fc_attributes)
-	attention_fc.n_layers = len(attention_fc_units)
-	attention_fc.hidden_activation_function = config.attention_fc_hidden_activation_function
-	attention_fc.output_activation_function = config.attention_fc_output_activation_function
-	attention_fc.apply_dropout = config.attention_fc_apply_dropout
-		
-	f_rg = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_g, nobias=True)
-	f_ug = L.Linear(config.bi_lstm_units[-1] * 2, config.ndim_g, nobias=True)
-
-	reader_fc_attributes = {}
-	reader_fc_units = zip(config.reader_fc_units[:-1], config.reader_fc_units[1:])
-	for i, (n_in, n_out) in enumerate(reader_fc_units):
-		reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-	reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
-	reader_fc.n_layers = len(reader_fc_units)
-	reader_fc.hidden_activation_function = config.reader_fc_hidden_activation_function
-	reader_fc.output_activation_function = config.reader_fc_output_activation_function
-	reader_fc.apply_dropout = config.attention_fc_apply_dropout
-
-	if config.use_gpu:
-		forward_lstm.to_gpu()
-		backward_lstm.to_gpu()
-		char_embed.to_gpu()
-		attention_fc.to_gpu()
-		reader_fc.to_gpu()
-		f_ym.to_gpu()
-		f_um.to_gpu()
-		f_rg.to_gpu()
-		f_ug.to_gpu()
-
-	return AttentiveReader(char_embed, forward_lstm, backward_lstm, f_um, f_ym, attention_fc, f_rg, f_ug, reader_fc)
 
 class Concat(function.Function):
 	def check_type_forward(self, in_types):
