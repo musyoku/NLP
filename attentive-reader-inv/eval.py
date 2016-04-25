@@ -18,7 +18,7 @@ data_dir = "alice"
 model_dir = "model"
 result_dir = "result"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
-reader = model.build()
+reader = model.OneDirectionAttentiveReader()
 reader.load(model_dir)
 
 try:

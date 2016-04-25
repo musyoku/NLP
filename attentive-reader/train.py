@@ -8,7 +8,7 @@ from config import config
 data_dir = "alice"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
-reader = model.AttentiveReader()
+reader = model.OneDirectionAttentiveReader()
 reader.load(model_dir)
 
 n_epoch = 100000
