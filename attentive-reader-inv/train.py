@@ -5,7 +5,7 @@ import model
 import vocab
 from config import config
 
-data_dir = "alice"
+data_dir = "beluga"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
 reader = model.OneDirectionAttentiveReader()
@@ -15,7 +15,7 @@ n_epoch = 100000
 n_train = 500
 total_time = 0
 
-def sample_data(limit=30):
+def sample_data(limit=50):
 	length = limit + 1
 	while length > limit:
 		k = np.random.randint(0, config.n_dataset)
