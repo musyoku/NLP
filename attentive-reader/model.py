@@ -310,7 +310,6 @@ class AttentiveReader:
 		else:
 			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_embed
 
-
 	def train(self, x_seq, test=False):
 		xp = self.xp
 		if len(x_seq) < 2:
@@ -324,16 +323,16 @@ class AttentiveReader:
 			if predicted_char_embed is None:
 				continue
 			loss = F.mean_squared_error(predicted_char_embed, target_char_embed)
-			sum_loss += loss
+			sum_loss += loss.data
 
-		self.zero_grads()
-		sum_loss.backward()
-		self.update()
+			self.zero_grads()
+			loss.backward()
+			self.update()
 
 		if xp is cuda.cupy:
-			sum_loss.to_cpu()
+			sum_loss = cuda.to_cpu(sum_loss)
 
-		return sum_loss.data
+		return sum_loss
 
 	def zero_grads(self):
 		for attr in vars(self):
