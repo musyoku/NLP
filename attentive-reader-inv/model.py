@@ -196,6 +196,8 @@ class AttentiveReader:
 		xp = self.xp
 		forward_context = []
 		backward_context = []
+		if len(x_seq) < 1:
+			return None, None
 		for char in x_seq:
 			char = Variable(xp.array([char], dtype=xp.int32))
 			embed = self.char_embed(char)
@@ -244,6 +246,11 @@ class AttentiveReader:
 		xp = self.xp
 		x_seq = xp.asanyarray(x_seq)
 		length = len(x_seq)
+		if length < 1:
+			if concat_weight:
+				return None, None
+			else:
+				return None, None, None, None
 		sum_loss = 0
 		target_char = x_seq[pos]
 		former = None
@@ -314,6 +321,8 @@ class AttentiveReader:
 			target_char = x_seq[pos]
 			target_char_embed = self.char_embed(Variable(xp.asarray([target_char], dtype=xp.int32)))
 			_, predicted_char_embed = self.forward_one_step(x_seq, pos, test=test)
+			if predicted_char_embed is None:
+				continue
 			loss = F.mean_squared_error(predicted_char_embed, target_char_embed)
 			sum_loss += loss
 
@@ -515,6 +524,11 @@ class OneDirectionAttentiveReader(AttentiveReader):
 		xp = self.xp
 		x_seq = xp.asanyarray(x_seq)
 		length = len(x_seq)
+		if length < 1:
+			if concat_weight:
+				return None, None
+			else:
+				return None, None, None, None
 		sum_loss = 0
 		target_char = x_seq[pos]
 		former = None
@@ -536,11 +550,11 @@ class OneDirectionAttentiveReader(AttentiveReader):
 
 		if former is not None:
 			former_context, former_encode = self.encode_backward(former, test=test)
-			former_attention_weight, former_attention_sum = self.attend(former_context, former_encode, test=test)
+			former_attention_weight, former_attention_sum = self.attend(former_context, None, test=test)
 			attention_sum += former_attention_sum
 		if latter is not None:
 			latter_context, latter_encode = self.encode_forward(latter, test=test)
-			latter_attention_weight, latter_attention_sum = self.attend(latter_context, latter_encode, test=test)
+			latter_attention_weight, latter_attention_sum = self.attend(latter_context, None, test=test)
 			attention_sum += latter_attention_sum
 
 		representation = 0
