@@ -12,7 +12,7 @@ reader = model.OneDirectionAttentiveReader()
 reader.load(model_dir)
 
 n_epoch = 100000
-n_train = 500
+n_train = 100
 total_time = 0
 
 def sample_data(limit=50):

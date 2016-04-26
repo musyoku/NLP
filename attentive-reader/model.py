@@ -323,16 +323,16 @@ class AttentiveReader:
 			if predicted_char_embed is None:
 				continue
 			loss = F.mean_squared_error(predicted_char_embed, target_char_embed)
-			sum_loss += loss.data
+			sum_loss += loss
 
-			self.zero_grads()
-			loss.backward()
-			self.update()
+		self.zero_grads()
+		sum_loss.backward()
+		self.update()
 
 		if xp is cuda.cupy:
-			sum_loss = cuda.to_cpu(sum_loss)
+			sum_loss.to_cpu()
 
-		return sum_loss
+		return sum_loss.data
 
 	def zero_grads(self):
 		for attr in vars(self):
