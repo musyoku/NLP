@@ -203,6 +203,8 @@ class LSTM:
 		if self.output_type == self.OUTPUT_TYPE_SOFTMAX:
 			output = self(c0, test=test, softmax=False)
 			ids = xp.argmax(output.data, axis=1)
+			if xp is cuda.cupy:
+				ids = cuda.to_cpu(ids)
 		elif self.output_type == self.OUTPUT_TYPE_EMBED_VECTOR:
 			output = self(c0, test=test, softmax=False)
 			ids = self.embed_id.reverse(output.data, to_cpu=True)
