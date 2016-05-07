@@ -29,7 +29,7 @@ class Conf:
 		# self.q_fc_units = [500, 250, 100]
 		self.lstm_units = [self.embed_size, 1000]
 		# if true, it uses BNLSTM
-		self.lstm_apply_batchnorm = True
+		self.lstm_apply_batchnorm = False
 		self.lstm_apply_dropout = False
 
 		# Fully-connected network that converts an output of the LSTM to a label distribution or an embed vector
@@ -56,7 +56,7 @@ class Conf:
 			raise Exception("Invalid output type of the fully-connected layer.")
 
 
-class LSTM(chainer.Chain):
+class LSTMNetwork(chainer.Chain):
 	def __init__(self, **layers):
 		super(LSTM, self).__init__(**layers)
 		self.n_layers = 0
@@ -112,7 +112,7 @@ class FullyConnectedNetwork(chainer.Chain):
 	def __call__(self, x, test=False):
 		return self.forward_one_step(x, test=test)
 
-class Model:
+class LSTM:
 	OUTPUT_TYPE_SOFTMAX = 1
 	OUTPUT_TYPE_EMBED_VECTOR = 2
 	def __init__(self, conf, name="lstm"):
@@ -152,7 +152,7 @@ class Model:
 			else:
 				lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 
-		lstm = LSTM(**lstm_attributes)
+		lstm = LSTMNetwork(**lstm_attributes)
 		lstm.n_layers = len(lstm_units)
 		lstm.apply_dropout = conf.lstm_apply_dropout
 		if conf.use_gpu:
