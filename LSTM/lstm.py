@@ -7,6 +7,7 @@ from chainer.utils import type_check
 from chainer import functions as F
 from chainer import links as L
 from bnlstm import BNLSTM
+from embed_id import EmbedID
 
 activations = {
 	"sigmoid": F.sigmoid, 
@@ -133,7 +134,7 @@ class LSTM:
 		conf.check()
 		wscale = 1.0
 
-		embed_id = L.EmbedID(conf.n_vocab, conf.embed_size)
+		embed_id = EmbedID(conf.n_vocab, conf.embed_size, ignore_label=-1)
 		if conf.use_gpu:
 			embed_id.to_gpu()
 
@@ -181,7 +182,7 @@ class LSTM:
 		output = self.embed_id(x)
 		output = self.lstm(output, test=test)
 		output = self.fc(output, test=test)
-		if softmax:
+		if softmax and self.output_type == self.OUTPUT_TYPE_SOFTMAX:
 			output = F.softmax(output)
 		return output
 
@@ -189,15 +190,23 @@ class LSTM:
 	def xp(self):
 		return np if self.lstm.layer_0._cpu else cuda.cupy
 
+	@property
+	def gpu(self):
+		return True if self.xp is cuda.cupy else False
+
 	def reset_state(self):
 		self.lstm.reset_state()
 
 	def predict(self, word, gpu=True, test=True):
 		xp = self.xp
 		c0 = Variable(xp.asarray([word], dtype=np.int32))
-		output = self(c0, test=test, softmax=False)
-		ids = xp.argmax(output.data, axis=1)
-		return ids
+		if self.output_type == self.OUTPUT_TYPE_SOFTMAX:
+			output = self(c0, test=test, softmax=False)
+			ids = xp.argmax(output.data, axis=1)
+		elif self.output_type == self.OUTPUT_TYPE_EMBED_VECTOR:
+			output = self(c0, test=test, softmax=False)
+			ids = self.embed_id.reverse(output.data, to_cpu=True)
+		return ids[0]
 
 	def distribution(self, word, test=True):
 		xp = self.xp
@@ -207,35 +216,42 @@ class LSTM:
 			output.to_cpu()
 		return output.data
 
-	def train(self, seq_batch, gpu=True, test=False):
+	def train(self, seq_batch, test=False):
 		self.reset_state()
 		xp = self.xp
 		sum_loss = 0
 		seq_batch = seq_batch.T
 		for c0, c1 in zip(seq_batch[:-1], seq_batch[1:]):
-			c0[c0 == -1] = 0
 			c0 = Variable(xp.asanyarray(c0, dtype=np.int32))
+			c1 = Variable(xp.asanyarray(c1, dtype=np.int32))
 			output = self(c0, test=test, softmax=False)
 			if self.output_type == self.OUTPUT_TYPE_SOFTMAX:
-				c1 = Variable(xp.asanyarray(c1, dtype=np.int32))
 				loss = F.softmax_cross_entropy(output, c1)
 			elif self.output_type == self.OUTPUT_TYPE_EMBED_VECTOR:
-				c1[c1 == -1] = 0
-				c1 = Variable(xp.asanyarray(c1, dtype=np.int32))
 				target = Variable(self.embed_id(c1).data)
 				loss = F.mean_squared_error(output, target)
 			else:
 				raise Exception()
 			sum_loss += loss
-		self.optimizer_lstm.zero_grads()
-		self.optimizer_fc.zero_grads()
+		self.zero_grads()
 		sum_loss.backward()
-		self.optimizer_lstm.update()
-		self.optimizer_fc.update()
+		self.update()
+		if self.gpu:
+			sum_loss.to_cpu()
 		return sum_loss.data
 
+	def zero_grads(self):
+		self.optimizer_lstm.zero_grads()
+		self.optimizer_fc.zero_grads()
+		self.optimizer_embed_id.zero_grads()
+
+	def update(self):
+		self.optimizer_lstm.update()
+		self.optimizer_fc.update()
+		self.optimizer_embed_id.update()
+
 	def should_save(self, prop):
-		if isinstance(prop, chainer.Chain) or isinstance(prop, chainer.optimizer.GradientMethod) or isinstance(prop, L.EmbedID):
+		if isinstance(prop, chainer.Chain) or isinstance(prop, chainer.optimizer.GradientMethod) or isinstance(prop, EmbedID):
 			return True
 		return False
 
