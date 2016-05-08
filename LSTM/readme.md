@@ -19,5 +19,14 @@ train_text内に`text`フォルダを作成し、その中に文章データの`
 - lstm_apply_batchnorm
 	- [Recurrent Batch Normalization](http://arxiv.org/abs/1603.09025)を有効にします
 	- 通常のLSTMに比べて学習速度は半分ほどに落ちますが、時間あたりの収束の速さは通常版を上回ります
-	- デフォルトでオンになっています
+	- デフォルトで有効です
+- fc_output_type
+	- LSTM出力を単語へ変換する全結合層の種類を指定します
+	- 1か2のどちらかを指定します
+	- 1(デフォルト)はソフトマックス層を用いて単語IDの分布を出力します
+	- 2は直接単語埋め込みベクトルを出力し、二乗誤差による学習を行います
+	- 2を使って学習させた場合、埋め込みベクトルの単語IDへの変換には`EmbedID.reverse()`を使います
 
+## その他
+
+- [EmbedID拡張のリポジトリ](https://github.com/musyoku/embed-id-extended)
