@@ -10,7 +10,7 @@ conf = Conf()
 conf.use_gpu = False if args.use_gpu == -1 else True
 conf.n_vocab = n_vocab
 conf.lstm_apply_batchnorm = True if args.lstm_apply_batchnorm == 1 else False
-conf.lstm_hidden_units = [200, 200]
+conf.lstm_hidden_units = [2000]
 conf.fc_output_type = args.fc_output_type
 conf.fc_hidden_units = [600, 600]
 conf.fc_apply_batchnorm = True

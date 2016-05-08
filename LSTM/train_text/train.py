@@ -70,7 +70,7 @@ for epoch in xrange(n_epoch):
 		phrase = get_validation_data()
 		for n in xrange(len(phrase)):
 			char = phrase[n]
-			dist = lstm.predict(char, test=False)
+			dist = lstm.predict(char, test=True)
 			if char == dist:
 				correct += 1
 	print "validation: {:.3f}".format(correct / float(num_validation) / float(len(phrase)))
