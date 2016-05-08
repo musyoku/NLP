@@ -31,5 +31,9 @@ train_text内に`text`フォルダを作成し、その中に文章データの`
 
 ## その他
 
+以下のリポジトリの内容を含んでいます。
+
 - [EmbedID拡張](https://github.com/musyoku/embed-id-extended)
 - [Recurrent Batch Normalization](https://github.com/musyoku/recurrent-batch-normalization)
+
+すでに入っているのでコピーする必要はありません。
