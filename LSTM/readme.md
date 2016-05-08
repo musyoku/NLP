@@ -29,4 +29,4 @@ train_text内に`text`フォルダを作成し、その中に文章データの`
 
 ## その他
 
-- [EmbedID拡張のリポジトリ](https://github.com/musyoku/embed-id-extended)
+- [EmbedID拡張](https://github.com/musyoku/embed-id-extended)
