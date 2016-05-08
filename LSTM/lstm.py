@@ -42,7 +42,7 @@ class Conf:
 		
 		self.fc_apply_batchnorm = False
 		self.fc_apply_dropout = False
-		self.fc_activation_function = "elu"
+		self.fc_activation_function = "tanh"
 
 		# "embed_vector": outputs an embed vector. Instead of softmax layer, We use EmbedID.reverse() to convert vector to label id.
 		# "softmax": outputs a probability distribution of label ids using softmax layer
