@@ -45,8 +45,8 @@ class Conf:
 		self.fc_activation_function = "elu"
 
 		# "embed_vector": outputs an embed vector. Instead of softmax layer, We use EmbedID.reverse() to convert vector to label id.
-		# "label_softmax": outputs a probability distribution of label ids using softmax layer
-		self.fc_output_type = LSTM.OUTPUT_TYPE_EMBED_VECTOR
+		# "softmax": outputs a probability distribution of label ids using softmax layer
+		self.fc_output_type = LSTM.OUTPUT_TYPE_SOFTMAX
 
 		self.learning_rate = 0.0025
 		self.gradient_momentum = 0.95
