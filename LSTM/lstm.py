@@ -197,14 +197,17 @@ class LSTM:
 	def reset_state(self):
 		self.lstm.reset_state()
 
-	def predict(self, word, gpu=True, test=True):
+	def predict(self, word, test=True, argmax=False):
 		xp = self.xp
 		c0 = Variable(xp.asarray([word], dtype=np.int32))
 		if self.output_type == self.OUTPUT_TYPE_SOFTMAX:
-			output = self(c0, test=test, softmax=False)
-			ids = xp.argmax(output.data, axis=1)
+			output = self(c0, test=test, softmax=True)
 			if xp is cuda.cupy:
-				ids = cuda.to_cpu(ids)
+				output.to_cpu()
+			if argmax:
+				ids = np.argmax(output.data, axis=1)
+			else:
+				ids = [np.random.choice(np.arange(output.data.shape[1]), p=output.data[0])]
 		elif self.output_type == self.OUTPUT_TYPE_EMBED_VECTOR:
 			output = self(c0, test=test, softmax=False)
 			ids = self.embed_id.reverse(output.data, to_cpu=True)
