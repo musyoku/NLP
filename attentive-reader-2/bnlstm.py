@@ -155,6 +155,21 @@ class NoBetaBatchNormalization(link.Link):
 	def start_finetuning(self):
 		self.N = 0
 
+
+class BatchNormalization(L.BatchNormalization):
+
+	def __init__(self, size, initial_gamma=0.1, decay=0.9, eps=1e-5, dtype=np.float32):
+		super(L.BatchNormalization, self).__init__()
+		self.add_param('gamma', size, dtype=dtype)
+		self.gamma.data.fill(initial_gamma)
+		self.add_param('beta', size, dtype=dtype)
+		self.beta.data.fill(0)
+		self.add_persistent('avg_mean', np.zeros(size, dtype=dtype))
+		self.add_persistent('avg_var', np.zeros(size, dtype=dtype))
+		self.add_persistent('N', 0)
+		self.decay = decay
+		self.eps = eps
+		
 def _extract_gates(x):
 	r = x.reshape((x.shape[0], x.shape[1] // 4, 4) + x.shape[2:])
 	return (r[:, :, i] for i in range(4))
@@ -254,15 +269,68 @@ def bn_lstm_cell(c_prev, x):
 def bn_lstm_state(c, x):
 	return HiddenState()(c, x)
 	
+
+
+def _as_mat(x):
+	if x.ndim == 2:
+		return x
+	return x.reshape(len(x), -1)
+
+
+class BiasFunction(function.Function):
+
+	def check_type_forward(self, in_types):
+		n_in = in_types.size()
+		type_check.expect(2 <= n_in, n_in <= 3)
+		x_type = in_types[0]
+
+		type_check.expect(
+			x_type.dtype == np.float32,
+			x_type.ndim >= 2,
+		)
+		if n_in.eval() == 3:
+			b_type = in_types[1]
+			type_check.expect(
+				b_type.dtype == np.float32,
+				b_type.ndim == 1,
+			)
+
+	def forward(self, inputs):
+		x = _as_mat(inputs[0])
+		b = inputs[1]
+		return x + b,
+
+	def backward(self, inputs, grad_outputs):
+		x = _as_mat(inputs[0])
+		gy = grad_outputs[0]
+		gb = gy.sum(0)
+		return gy, gb
+
+def bias(x, b):
+	return BiasFunction()(x, b)
+
+class Bias(link.Link):
+
+	def __init__(self, in_size, out_size, bias=0, nobias=False, initialW=None, initial_bias=None):
+		super(Bias, self).__init__()
+		self.add_param('b', out_size)
+		if initial_bias is None:
+			initial_bias = bias
+		self.b.data[...] = initial_bias
+
+	def __call__(self, x):
+		return bias(x, self.b)
+
 class BNLSTM(link.Chain):
 
 	def __init__(self, in_size, out_size):
 		super(BNLSTM, self).__init__(
-			wx=L.Linear(in_size, 4 * out_size),
+			wx=L.Linear(in_size, 4 * out_size, nobias=True),
 			wh=L.Linear(out_size, 4 * out_size, nobias=True),
+			bias=Bias(4 * out_size, 4 * out_size),
 			bnx=NoBetaBatchNormalization(4 * out_size),
 			bnh=NoBetaBatchNormalization(4 * out_size),
-			bnc=NoBetaBatchNormalization(out_size)
+			bnc=BatchNormalization(out_size)
 		)
 		self.state_size = out_size
 		self.reset_state()
@@ -285,12 +353,13 @@ class BNLSTM(link.Chain):
 		self.c = self.h = None
 
 	def __call__(self, x, test=False):
-		lstm_in = self.bnx(self.wx(x))
+		lstm_in = self.bnx(self.wx(x), test=test)
 		if self.h is not None:
-			lstm_in += self.bnh(self.wh(self.h))
+			lstm_in += self.bnh(self.wh(self.h), test=test)
+		lstm_in = self.bias(lstm_in)
 		if self.c is None:
 			xp = self.xp
 			self.c = Variable(xp.zeros((len(x.data), self.state_size), dtype=x.data.dtype), volatile="auto")
 		self.c = bn_lstm_cell(self.c, lstm_in)
-		self.h = bn_lstm_state(self.bnc(self.c), lstm_in)
+		self.h = bn_lstm_state(self.bnc(self.c, test=test), lstm_in)
 		return self.h

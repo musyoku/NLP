@@ -25,11 +25,12 @@ for phrase in xrange(100):
 	lstm.reset_state()
 	str = ""
 	char = get_validation_data()[0]
+	if char == 0:
+		continue
 	for n in xrange(100):
 		str += vocab.id_to_word(char)
-		id = lstm.predict(char, test=True)
+		id = lstm.predict(char, test=True, argmax=False)
 		if id == 0:
 			break
 		char = id
 	print str
-

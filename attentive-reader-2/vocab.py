@@ -10,6 +10,7 @@ def load(dir):
 	fs = os.listdir(dir)
 	print "loading", len(fs), "files..."
 	dataset = []
+	vocab["<unk>"] = -1
 	vocab["<eos>"] = 0
 	for fn in fs:
 		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
@@ -31,6 +32,8 @@ def load(dir):
 	return dataset, n_vocab, n_dataset
 
 def id_to_word(id):
+	if id < 0:
+		return "<unk"
 	return inv_vocab[id]
 
 def ids_to_str(ids):

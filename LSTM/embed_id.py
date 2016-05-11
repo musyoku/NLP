@@ -36,6 +36,7 @@ class EmbedID(L.EmbedID):
 	def reverse_argmax(self, vec):
 		xp = cuda.get_array_module(*(vec,))
 		cos = self.cosine_similarity(vec)
+		print cos
 		# 最初の軸がIDに対応する
 		return xp.argmax(cos, axis=0)
 
