@@ -110,11 +110,11 @@ class Conf:
 		self.gradient_momentum = 0.95
 		self.n_vocab = -1
 
-		self.ndim_char_embed = 200
-		self.ndim_m = 300
-		self.ndim_g = 400
+		self.ndim_char_embed = 100
+		self.ndim_m = 100
+		self.ndim_g = 100
 
-		self.lstm_hidden_units = [500]
+		self.lstm_hidden_units = [200]
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_dropout = False
 
@@ -123,7 +123,7 @@ class Conf:
 		self.attention_fc_output_activation_function = None
 		self.attention_fc_apply_dropout = False
 
-		self.reader_fc_hidden_units = [600]
+		self.reader_fc_hidden_units = []
 		self.reader_fc_hidden_activation_function = "elu"
 		self.reader_fc_output_activation_function = None
 		self.reader_fc_apply_dropout = False
@@ -187,9 +187,12 @@ class AttentiveReader:
 		self.f_ug = L.Linear(conf.lstm_hidden_units[-1] * 2, conf.ndim_g, nobias=True)
 
 		reader_fc_attributes = {}
-		reader_fc_hidden_units = [(conf.ndim_g, conf.reader_fc_hidden_units[0])]
-		reader_fc_hidden_units += zip(conf.reader_fc_hidden_units[:-1], conf.reader_fc_hidden_units[1:])
-		reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.n_vocab)]
+		if len(conf.reader_fc_hidden_units) == 0:
+			reader_fc_hidden_units = [(conf.ndim_g, conf.n_vocab)]
+		else:
+			reader_fc_hidden_units = [(conf.ndim_g, conf.reader_fc_hidden_units[0])]
+			reader_fc_hidden_units += zip(conf.reader_fc_hidden_units[:-1], conf.reader_fc_hidden_units[1:])
+			reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.n_vocab)]
 		for i, (n_in, n_out) in enumerate(reader_fc_hidden_units):
 			reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 		self.reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
@@ -292,6 +295,12 @@ class AttentiveReader:
 	def xp(self):
 		return np if self.char_embed._cpu else cuda.cupy
 
+	@property
+	def gpu(self):
+		if hasattr(cuda, "cupy"):
+			return True if self.xp is cuda.cupy else False
+		return False
+
 	def reset_state(self):
 		self.forward_lstm.reset_state()
 		self.backward_lstm.reset_state()
@@ -381,9 +390,10 @@ class AttentiveReader:
 			loss = F.softmax_cross_entropy(predicted_char_bef_softmax, Variable(xp.asarray([target_char], dtype=xp.int32)))
 			sum_loss += loss
 
-		self.zero_grads()
-		sum_loss.backward()
-		self.update()
+			self.zero_grads()
+			loss.backward()
+			self.update()
+
 		if xp is not np:
 			sum_loss.to_cpu()
 		return sum_loss.data
@@ -393,20 +403,22 @@ class AttentiveReader:
 		sum_loss = 0
 		for l in xrange(len(ignore_labels)):
 			x_seq_batch[x_seq_batch == ignore_labels[l]] = -1
+		if self.gpu:
+			x_seq_batch = cuda.to_gpu(x_seq_batch)
 		for pos in xrange(x_seq_batch.shape[1]):
 			target = x_seq_batch[:, pos]
 			_, char_distribution_bef_softmax = self.forward_one_step(x_seq_batch, pos, test=test)
 			if char_distribution_bef_softmax is None:
 				continue
-			loss = F.softmax_cross_entropy(char_distribution_bef_softmax, Variable(target.astype(xp.int32)))
-			sum_loss += loss
+			loss = F.softmax_cross_entropy(char_distribution_bef_softmax, Variable(xp.asanyarray(target, dtype=xp.int32)))
+			sum_loss += loss.data
+			self.zero_grads()
+			loss.backward()
+			self.update()
 
-		self.zero_grads()
-		sum_loss.backward()
-		self.update()
 		if xp is not np:
-			sum_loss.to_cpu()
-		return sum_loss.data
+			sum_loss = cuda.to_cpu(sum_loss)
+		return sum_loss
 
 	def zero_grads(self):
 		for attr in vars(self):
@@ -470,7 +482,10 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		forward_lstm_units += zip(conf.lstm_hidden_units[:-1], conf.lstm_hidden_units[1:])
 
 		for i, (n_in, n_out) in enumerate(forward_lstm_units):
-			forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+			if conf.lstm_apply_batchnorm:
+				forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			else:
+				forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 
 		self.forward_lstm = StackedLSTM(**forward_lstm_attributes)
 		self.forward_lstm.n_layers = len(forward_lstm_units)
@@ -481,7 +496,10 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		backward_lstm_units += zip(conf.lstm_hidden_units[:-1], conf.lstm_hidden_units[1:])
 
 		for i, (n_in, n_out) in enumerate(backward_lstm_units):
-			backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+			if conf.lstm_apply_batchnorm:
+				backward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			else:
+				backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 
 		self.backward_lstm = StackedLSTM(**backward_lstm_attributes)
 		self.backward_lstm.n_layers = len(backward_lstm_units)
@@ -511,9 +529,12 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		self.f_ug = L.Linear(conf.lstm_hidden_units[-1], conf.ndim_g, nobias=True)
 
 		reader_fc_attributes = {}
-		reader_fc_hidden_units = [(conf.ndim_g, conf.reader_fc_hidden_units[0])]
-		reader_fc_hidden_units += zip(conf.reader_fc_hidden_units[:-1], conf.reader_fc_hidden_units[1:])
-		reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.n_vocab)]
+		if len(conf.reader_fc_hidden_units) == 0:
+			reader_fc_hidden_units = [(conf.ndim_g, conf.n_vocab)]
+		else:
+			reader_fc_hidden_units = [(conf.ndim_g, conf.reader_fc_hidden_units[0])]
+			reader_fc_hidden_units += zip(conf.reader_fc_hidden_units[:-1], conf.reader_fc_hidden_units[1:])
+			reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.n_vocab)]
 		for i, (n_in, n_out) in enumerate(reader_fc_hidden_units):
 			reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 		self.reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
@@ -607,6 +628,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		return weights, attention_sum
 
 	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True):
+		start_time = time.time()
 		self.reset_state()
 		xp = self.xp
 		length = x_seq.shape[1]
@@ -653,7 +675,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 
 		g = self.f_rg(representation)
 		predicted_char_bef_softmax = self.reader_fc(g)
-
+		
 		if concat_weight:
 			batchsize = x_seq.shape[0]
 			weight = xp.zeros((batchsize, length), dtype=xp.float32)
