@@ -118,15 +118,15 @@ class Conf:
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_dropout = False
 
-		self.attention_fc_hidden_units = []
+		self.attention_fc_hidden_units = [600]
 		self.attention_fc_hidden_activation_function = "elu"
 		self.attention_fc_output_activation_function = None
-		self.attention_fc_apply_dropout = False
+		self.attention_fc_apply_dropout = True
 
-		self.reader_fc_hidden_units = []
+		self.reader_fc_hidden_units = [600]
 		self.reader_fc_hidden_activation_function = "elu"
 		self.reader_fc_output_activation_function = None
-		self.reader_fc_apply_dropout = False
+		self.reader_fc_apply_dropout = True
 
 	def check(self):
 		if len(self.lstm_hidden_units) < 1:
@@ -136,7 +136,7 @@ class AttentiveReader:
 	def __init__(self, conf, name="reader"):
 		self.name = name
 		wscale = 1.0
-		gradiend_clip = 1.0
+		gradiend_clip = 10.0
 
 		forward_lstm_attributes = {}
 		forward_lstm_units = [(conf.ndim_char_embed, conf.lstm_hidden_units[0])]
