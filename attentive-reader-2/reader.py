@@ -189,7 +189,7 @@ class AttentiveReader:
 		reader_fc_attributes = {}
 		reader_fc_hidden_units = [(conf.ndim_g, conf.reader_fc_hidden_units[0])]
 		reader_fc_hidden_units += zip(conf.reader_fc_hidden_units[:-1], conf.reader_fc_hidden_units[1:])
-		reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.ndim_char_embed)]
+		reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.n_vocab)]
 		for i, (n_in, n_out) in enumerate(reader_fc_hidden_units):
 			reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 		self.reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
@@ -250,9 +250,10 @@ class AttentiveReader:
 		xp = self.xp
 		forward_context = []
 		backward_context = []
-		if len(x_seq) < 1:
+		if x_seq.shape[1] < 1:
 			return None, None
 		for char in x_seq:
+			print x_seq
 			char = Variable(xp.array([char], dtype=xp.int32))
 			embed = self.char_embed(char)
 			y = self.forward_lstm(embed, test=test)
@@ -343,7 +344,7 @@ class AttentiveReader:
 				representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
 
 		g = self.f_rg(representation)
-		predicted_char_embed = self.reader_fc(g)
+		predicted_char_bef_softmax = self.reader_fc(g)
 
 		if concat_weight:
 			batchsize = 1
@@ -360,11 +361,11 @@ class AttentiveReader:
 			weight /= attention_sum.data
 			if xp is not np:
 				weight = cuda.to_cpu(weight)
-			return weight, predicted_char_embed
+			return weight, predicted_char_bef_softmax
 		else:
-			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_embed
+			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_bef_softmax
 
-	def train(self, x_seq, test=False):
+	def train(self, x_seq, test=False, ignore_labels=[0]):
 		xp = self.xp
 		if len(x_seq) < 2:
 			return 0
@@ -372,20 +373,39 @@ class AttentiveReader:
 		sum_loss = 0
 		for pos in xrange(len(x_seq)):
 			target_char = x_seq[pos]
-			target_char_embed = self.char_embed(Variable(xp.asarray([target_char], dtype=xp.int32)))
-			_, predicted_char_embed = self.forward_one_step(x_seq, pos, test=test)
-			if predicted_char_embed is None:
+			if target_char in ignore_labels:
+				target_char = -1
+			_, predicted_char_bef_softmax = self.forward_one_step(x_seq, pos, test=test)
+			if predicted_char_bef_softmax is None:
 				continue
-			loss = F.mean_squared_error(predicted_char_embed, target_char_embed)
+			loss = F.softmax_cross_entropy(predicted_char_bef_softmax, Variable(xp.asarray([target_char], dtype=xp.int32)))
 			sum_loss += loss
 
 		self.zero_grads()
 		sum_loss.backward()
 		self.update()
-
 		if xp is not np:
 			sum_loss.to_cpu()
+		return sum_loss.data
 
+	def train_batch(self, x_seq_batch, test=False, ignore_labels=[0]):
+		xp = self.xp
+		sum_loss = 0
+		for l in xrange(len(ignore_labels)):
+			x_seq_batch[x_seq_batch == ignore_labels[l]] = -1
+		for pos in xrange(x_seq_batch.shape[1]):
+			target = x_seq_batch[:, pos]
+			_, char_distribution_bef_softmax = self.forward_one_step(x_seq_batch, pos, test=test)
+			if char_distribution_bef_softmax is None:
+				continue
+			loss = F.softmax_cross_entropy(char_distribution_bef_softmax, Variable(target.astype(xp.int32)))
+			sum_loss += loss
+
+		self.zero_grads()
+		sum_loss.backward()
+		self.update()
+		if xp is not np:
+			sum_loss.to_cpu()
 		return sum_loss.data
 
 	def zero_grads(self):
@@ -493,7 +513,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		reader_fc_attributes = {}
 		reader_fc_hidden_units = [(conf.ndim_g, conf.reader_fc_hidden_units[0])]
 		reader_fc_hidden_units += zip(conf.reader_fc_hidden_units[:-1], conf.reader_fc_hidden_units[1:])
-		reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.ndim_char_embed)]
+		reader_fc_hidden_units += [(conf.reader_fc_hidden_units[-1], conf.n_vocab)]
 		for i, (n_in, n_out) in enumerate(reader_fc_hidden_units):
 			reader_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 		self.reader_fc = FullyConnectedNetwork(**reader_fc_attributes)
@@ -553,8 +573,8 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		self.reset_state()
 		xp = self.xp
 		forward_context = []
-		for char in x_seq:
-			char = Variable(xp.array([char], dtype=xp.int32))
+		for pos in xrange(x_seq.shape[1]):
+			char = Variable(x_seq[:,pos].reshape(-1, 1).astype(xp.int32))
 			embed = self.char_embed(char)
 			y = self.forward_lstm(embed, test=test)
 			forward_context.append(y)
@@ -564,8 +584,8 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		self.reset_state()
 		xp = self.xp
 		backward_context = []
-		for char in x_seq[::-1]:
-			char = Variable(xp.array([char], dtype=xp.int32))
+		for pos in xrange(x_seq.shape[1]):
+			char = Variable(x_seq[:,pos].reshape(-1, 1).astype(xp.int32))
 			embed = self.char_embed(char)
 			y = self.backward_lstm(embed, test=test)
 			backward_context.append(y)
@@ -589,26 +609,24 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True):
 		self.reset_state()
 		xp = self.xp
-		x_seq = xp.asanyarray(x_seq)
-		length = len(x_seq)
+		length = x_seq.shape[1]
 		if length < 1:
 			if concat_weight:
 				return None, None
 			else:
 				return None, None, None, None
 		sum_loss = 0
-		target_char = x_seq[pos]
 		former = None
 		latter = None
 		attention_sum = 0
 
 		if pos == 0:
-			latter = x_seq[1:]
+			latter = x_seq[:,1:]
 		elif pos == length - 1:
-			former = x_seq[:pos]
+			former = x_seq[:,:pos]
 		else:
-			former = x_seq[:pos]
-			latter = x_seq[pos + 1:]
+			former = x_seq[:,:pos]
+			latter = x_seq[:,pos + 1:]
 
 		former_context = None
 		latter_context = None
@@ -634,27 +652,27 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 				representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
 
 		g = self.f_rg(representation)
-		predicted_char_embed = self.reader_fc(g)
+		predicted_char_bef_softmax = self.reader_fc(g)
 
 		if concat_weight:
-			batchsize = 1
+			batchsize = x_seq.shape[0]
 			weight = xp.zeros((batchsize, length), dtype=xp.float32)
 			index = 0
 			if former_attention_weight is not None:
 				f_length = len(former_attention_weight)
 				for i in xrange(f_length):
 					index = i
-					weight[:, f_length - i - 1] = former_attention_weight[i].data
+					weight[:, f_length - i - 1] = former_attention_weight[i].data.reshape(-1)
 				index += 1
 			if latter_attention_weight is not None:
 				for i in xrange(len(latter_attention_weight)):
-					weight[:, index + i + 1] = latter_attention_weight[i].data
+					weight[:, index + i + 1] = latter_attention_weight[i].data.reshape(-1)
 			weight /= attention_sum.data
 			if xp is not np:
 				weight = cuda.to_cpu(weight)
-			return weight, predicted_char_embed
+			return weight, predicted_char_bef_softmax
 		else:
-			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_embed
+			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_bef_softmax
 
 class Concat(function.Function):
 	def check_type_forward(self, in_types):
