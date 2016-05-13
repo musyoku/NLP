@@ -622,12 +622,12 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 				m_t = F.tanh(self.f_ym(yd_t))
 			else:
 				m_t = F.tanh(self.f_ym(yd_t) + self.f_um(encode))
-			s_t = F.exp(self.attention_fc(m_t, test=False))
+			s_t = F.exp(self.attention_fc(m_t, test=test))
 			weights.append(s_t)
 			attention_sum += s_t
 		return weights, attention_sum
 
-	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True):
+	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True, softmax=False):
 		start_time = time.time()
 		self.reset_state()
 		xp = self.xp
@@ -692,7 +692,10 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 			weight /= attention_sum.data
 			if xp is not np:
 				weight = cuda.to_cpu(weight)
-			return weight, predicted_char_bef_softmax
+			if softmax:
+				return weight, F.softmax(predicted_char_bef_softmax)
+			else:
+				return weight, predicted_char_bef_softmax
 		else:
 			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_bef_softmax
 
