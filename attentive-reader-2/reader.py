@@ -110,23 +110,23 @@ class Conf:
 		self.gradient_momentum = 0.95
 		self.n_vocab = -1
 
-		self.ndim_char_embed = 100
-		self.ndim_m = 100
-		self.ndim_g = 100
+		self.ndim_char_embed = 200
+		self.ndim_m = 512
+		self.ndim_g = 512
 
-		self.lstm_hidden_units = [200]
+		self.lstm_hidden_units = [512]
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_dropout = False
 
-		self.attention_fc_hidden_units = [600]
+		self.attention_fc_hidden_units = []
 		self.attention_fc_hidden_activation_function = "elu"
 		self.attention_fc_output_activation_function = None
-		self.attention_fc_apply_dropout = True
+		self.attention_fc_apply_dropout = False
 
-		self.reader_fc_hidden_units = [600]
+		self.reader_fc_hidden_units = [2048]
 		self.reader_fc_hidden_activation_function = "elu"
 		self.reader_fc_output_activation_function = None
-		self.reader_fc_apply_dropout = True
+		self.reader_fc_apply_dropout = False
 
 	def check(self):
 		if len(self.lstm_hidden_units) < 1:

@@ -14,7 +14,7 @@ sns.set()
 # Windowsでprintする用
 sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharrefreplace")
 
-data_dir = "beluga"
+data_dir = "debug"
 model_dir = "model"
 result_dir = "result"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)

@@ -11,10 +11,11 @@ def load(dir):
 	print "loading", len(fs), "files..."
 	dataset = []
 	vocab["<unk>"] = -1
-	vocab["<eos>"] = 0
+	vocab["<bos>"] = 0
+	vocab["<eos>"] = 1
 	for fn in fs:
-		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
-		for line in unko:
+		lines = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
+		for line in lines:
 			line = line.replace("\n", "")
 			line = line.replace("\r", "")
 			data = np.empty((len(line),), dtype=np.int32)

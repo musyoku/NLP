@@ -5,7 +5,7 @@ import model
 import vocab
 from config import config
 
-data_dir = "beluga"
+data_dir = "debug"
 model_dir = "model"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
 reader = model.OneDirectionAttentiveReader()

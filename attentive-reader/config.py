@@ -10,10 +10,10 @@ class Config(object):
 		self.n_vocab = -1
 
 		self.ndim_char_embed = 200
-		self.ndim_m = 1024
-		self.ndim_g = 4096
+		self.ndim_m = 512
+		self.ndim_g = 512
 
-		self.bi_lstm_units = [self.ndim_char_embed, 4096]
+		self.bi_lstm_units = [self.ndim_char_embed, 512]
 		self.bi_lstm_apply_dropout = False
 
 		self.attention_fc_units = [self.ndim_m, 1]
