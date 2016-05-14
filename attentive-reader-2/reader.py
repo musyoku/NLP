@@ -411,13 +411,13 @@ class AttentiveReader:
 			if char_distribution_bef_softmax is None:
 				continue
 			loss = F.softmax_cross_entropy(char_distribution_bef_softmax, Variable(xp.asanyarray(target, dtype=xp.int32)))
-			sum_loss += loss.data
-			self.zero_grads()
-			loss.backward()
-			self.update()
+			sum_loss += loss
 
+		self.zero_grads()
+		sum_loss.backward()
+		self.update()
 		if xp is not np:
-			sum_loss = cuda.to_cpu(sum_loss)
+			sum_loss = cuda.to_cpu(sum_loss.data)
 		return sum_loss
 
 	def zero_grads(self):
@@ -595,7 +595,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		xp = self.xp
 		forward_context = []
 		for pos in xrange(x_seq.shape[1]):
-			char = Variable(x_seq[:,pos].reshape(-1, 1).astype(xp.int32))
+			char = Variable(x_seq[:,pos].astype(xp.int32))
 			embed = self.char_embed(char)
 			y = self.forward_lstm(embed, test=test)
 			forward_context.append(y)
@@ -606,7 +606,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		xp = self.xp
 		backward_context = []
 		for pos in xrange(x_seq.shape[1]):
-			char = Variable(x_seq[:,pos].reshape(-1, 1).astype(xp.int32))
+			char = Variable(x_seq[:,-pos-1].astype(xp.int32))
 			embed = self.char_embed(char)
 			y = self.backward_lstm(embed, test=test)
 			backward_context.append(y)
