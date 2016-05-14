@@ -669,12 +669,9 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		if former_context is not None:
 			for t in xrange(len(former_context)):
 				representation += apply_attention(former_context[t], former_attention_weight[t] / attention_sum)
-
-		if pos == 0 or pos == length - 1:
-			if concat_weight:
-				return None, None
-			else:
-				return None, None, None, None
+		if latter_context is not None:
+			for t in xrange(len(latter_context)):
+				representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
 
 		g = self.f_rg(representation)
 		predicted_char_bef_softmax = self.reader_fc(g)
