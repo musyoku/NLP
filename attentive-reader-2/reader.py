@@ -111,22 +111,22 @@ class Conf:
 		self.n_vocab = -1
 
 		self.ndim_char_embed = 200
-		self.ndim_m = 512
-		self.ndim_g = 512
+		self.ndim_m = 100
+		self.ndim_g = 200
 
-		self.lstm_hidden_units = [512]
+		self.lstm_hidden_units = [200]
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_dropout = False
 
 		self.attention_fc_hidden_units = []
 		self.attention_fc_hidden_activation_function = "elu"
 		self.attention_fc_output_activation_function = None
-		self.attention_fc_apply_dropout = False
+		self.attention_fc_apply_dropout = True
 
-		self.reader_fc_hidden_units = [2048]
+		self.reader_fc_hidden_units = [1000]
 		self.reader_fc_hidden_activation_function = "elu"
 		self.reader_fc_output_activation_function = None
-		self.reader_fc_apply_dropout = False
+		self.reader_fc_apply_dropout = True
 
 	def check(self):
 		if len(self.lstm_hidden_units) < 1:
@@ -398,7 +398,7 @@ class AttentiveReader:
 			sum_loss.to_cpu()
 		return sum_loss.data
 
-	def train_batch(self, x_seq_batch, test=False, ignore_labels=[0]):
+	def train_batch(self, x_seq_batch, test=False, ignore_labels=[0, 1]):
 		xp = self.xp
 		sum_loss = 0
 		for l in xrange(len(ignore_labels)):
@@ -411,13 +411,13 @@ class AttentiveReader:
 			if char_distribution_bef_softmax is None:
 				continue
 			loss = F.softmax_cross_entropy(char_distribution_bef_softmax, Variable(xp.asanyarray(target, dtype=xp.int32)))
-			sum_loss += loss
+			sum_loss += loss.data
+			self.zero_grads()
+			loss.backward()
+			self.update()
 
-		self.zero_grads()
-		sum_loss.backward()
-		self.update()
 		if xp is not np:
-			sum_loss = cuda.to_cpu(sum_loss.data)
+			sum_loss = cuda.to_cpu(sum_loss)
 		return sum_loss
 
 	def zero_grads(self):
@@ -669,9 +669,12 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		if former_context is not None:
 			for t in xrange(len(former_context)):
 				representation += apply_attention(former_context[t], former_attention_weight[t] / attention_sum)
-		if latter_context is not None:
-			for t in xrange(len(latter_context)):
-				representation += apply_attention(latter_context[t], latter_attention_weight[t] / attention_sum)
+
+		if pos == 0 or pos == length - 1:
+			if concat_weight:
+				return None, None
+			else:
+				return None, None, None, None
 
 		g = self.f_rg(representation)
 		predicted_char_bef_softmax = self.reader_fc(g)
