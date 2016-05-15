@@ -106,24 +106,24 @@ class GradientClipping(object):
 class Conf:
 	def __init__(self):
 		self.use_gpu = True
-		self.learning_rate = 0.0002
+		self.learning_rate = 0.0001
 		self.gradient_momentum = 0.95
 		self.n_vocab = -1
 
 		self.ndim_char_embed = 200
 		self.ndim_m = 100
-		self.ndim_g = 200
+		self.ndim_g = 400
 
-		self.lstm_hidden_units = [200]
+		self.lstm_hidden_units = [400]
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_dropout = False
 
-		self.attention_fc_hidden_units = []
+		self.attention_fc_hidden_units = [50]
 		self.attention_fc_hidden_activation_function = "elu"
 		self.attention_fc_output_activation_function = None
 		self.attention_fc_apply_dropout = True
 
-		self.reader_fc_hidden_units = [1000]
+		self.reader_fc_hidden_units = [300]
 		self.reader_fc_hidden_activation_function = "elu"
 		self.reader_fc_output_activation_function = None
 		self.reader_fc_apply_dropout = True
@@ -135,7 +135,7 @@ class Conf:
 class AttentiveReader:
 	def __init__(self, conf, name="reader"):
 		self.name = name
-		wscale = 1.0
+		wscale = 0.1
 		gradiend_clip = 10.0
 
 		forward_lstm_attributes = {}
@@ -475,7 +475,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 	def __init__(self, conf, name="mono"):
 		self.name = name
 		conf.check()
-		wscale = 1.0
+		wscale = 0.1
 
 		forward_lstm_attributes = {}
 		forward_lstm_units = [(conf.ndim_char_embed, conf.lstm_hidden_units[0])]
