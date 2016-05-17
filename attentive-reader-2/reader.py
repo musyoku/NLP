@@ -7,6 +7,7 @@ from chainer.utils import type_check
 from chainer import functions as F
 from chainer import links as L
 from bnlstm import BNLSTM
+from sgu import DSGU
 
 activations = {
 	"sigmoid": F.sigmoid, 
@@ -114,9 +115,14 @@ class Conf:
 		self.ndim_m = 100
 		self.ndim_g = 400
 
+		self.rnn_type = "dsgu"
+
 		self.lstm_hidden_units = [400]
 		self.lstm_apply_batchnorm = False
 		self.lstm_apply_dropout = False
+
+		self.dsgu_hidden_units = [400]
+		self.dsgu_apply_dropout = False
 
 		self.attention_fc_hidden_units = [50]
 		self.attention_fc_hidden_activation_function = "elu"
@@ -143,10 +149,15 @@ class AttentiveReader:
 		forward_lstm_units += zip(conf.lstm_hidden_units[:-1], conf.lstm_hidden_units[1:])
 
 		for i, (n_in, n_out) in enumerate(forward_lstm_units):
-			if conf.lstm_apply_batchnorm:
-				forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			if conf.rnn_type == "dsgu":
+				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+			elif conf.rnn_type == "lstm":
+				if conf.lstm_apply_batchnorm:
+					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+				else:
+					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 			else:
-				forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+				raise NotImplementedError()
 
 		self.forward_lstm = StackedLSTM(**forward_lstm_attributes)
 		self.forward_lstm.n_layers = len(forward_lstm_units)
@@ -157,10 +168,15 @@ class AttentiveReader:
 		backward_lstm_units += zip(conf.lstm_hidden_units[:-1], conf.lstm_hidden_units[1:])
 
 		for i, (n_in, n_out) in enumerate(backward_lstm_units):
-			if conf.lstm_apply_batchnorm:
-				backward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			if conf.rnn_type == "dsgu":
+				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+			elif conf.rnn_type == "lstm":
+				if conf.lstm_apply_batchnorm:
+					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+				else:
+					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 			else:
-				backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+				raise NotImplementedError()
 
 		self.backward_lstm = StackedLSTM(**backward_lstm_attributes)
 		self.backward_lstm.n_layers = len(backward_lstm_units)
@@ -411,6 +427,7 @@ class AttentiveReader:
 			if char_distribution_bef_softmax is None:
 				continue
 			loss = F.softmax_cross_entropy(char_distribution_bef_softmax, Variable(xp.asanyarray(target, dtype=xp.int32)))
+			print loss.data
 			sum_loss += loss.data
 			self.zero_grads()
 			loss.backward()
@@ -482,10 +499,15 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		forward_lstm_units += zip(conf.lstm_hidden_units[:-1], conf.lstm_hidden_units[1:])
 
 		for i, (n_in, n_out) in enumerate(forward_lstm_units):
-			if conf.lstm_apply_batchnorm:
-				forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			if conf.rnn_type == "dsgu":
+				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+			elif conf.rnn_type == "lstm":
+				if conf.lstm_apply_batchnorm:
+					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+				else:
+					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 			else:
-				forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+				raise NotImplementedError()
 
 		self.forward_lstm = StackedLSTM(**forward_lstm_attributes)
 		self.forward_lstm.n_layers = len(forward_lstm_units)
@@ -496,10 +518,15 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		backward_lstm_units += zip(conf.lstm_hidden_units[:-1], conf.lstm_hidden_units[1:])
 
 		for i, (n_in, n_out) in enumerate(backward_lstm_units):
-			if conf.lstm_apply_batchnorm:
-				backward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			if conf.rnn_type == "dsgu":
+				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+			elif conf.rnn_type == "lstm":
+				if conf.lstm_apply_batchnorm:
+					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+				else:
+					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
 			else:
-				backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+				raise NotImplementedError()
 
 		self.backward_lstm = StackedLSTM(**backward_lstm_attributes)
 		self.backward_lstm.n_layers = len(backward_lstm_units)
