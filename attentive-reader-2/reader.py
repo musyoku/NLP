@@ -7,7 +7,7 @@ from chainer.utils import type_check
 from chainer import functions as F
 from chainer import links as L
 from bnlstm import BNLSTM
-from sgu import DSGU
+from sgu import StatefulDSGU
 
 activations = {
 	"sigmoid": F.sigmoid, 
@@ -115,7 +115,7 @@ class Conf:
 		self.ndim_m = 100
 		self.ndim_g = 400
 
-		self.rnn_type = "dsgu"
+		self.rnn_type = "lstm"
 
 		self.lstm_hidden_units = [400]
 		self.lstm_apply_batchnorm = False
@@ -138,7 +138,7 @@ class Conf:
 		if len(self.lstm_hidden_units) < 1:
 			raise Exception("You need to add one or more hidden layers to LSTM network.")
 
-class AttentiveReader:
+class AttentiveReader(object):
 	def __init__(self, conf, name="reader"):
 		self.name = name
 		wscale = 0.1
@@ -150,12 +150,14 @@ class AttentiveReader:
 
 		for i, (n_in, n_out) in enumerate(forward_lstm_units):
 			if conf.rnn_type == "dsgu":
-				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+				forward_lstm_attributes["layer_%i" % i] = StatefulDSGU(n_in, n_out)
 			elif conf.rnn_type == "lstm":
 				if conf.lstm_apply_batchnorm:
 					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
 				else:
 					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+			elif conf.rnn_type == "gru":
+				forward_lstm_attributes["layer_%i" % i] = L.StatefulGRU(n_in, n_out)
 			else:
 				raise NotImplementedError()
 
@@ -169,12 +171,14 @@ class AttentiveReader:
 
 		for i, (n_in, n_out) in enumerate(backward_lstm_units):
 			if conf.rnn_type == "dsgu":
-				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+				backward_lstm_attributes["layer_%i" % i] = StatefulDSGU(n_in, n_out)
 			elif conf.rnn_type == "lstm":
 				if conf.lstm_apply_batchnorm:
-					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+					backward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
 				else:
-					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+					backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+			elif conf.rnn_type == "gru":
+				backward_lstm_attributes["layer_%i" % i] = L.StatefulGRU(n_in, n_out)
 			else:
 				raise NotImplementedError()
 
@@ -182,15 +186,18 @@ class AttentiveReader:
 		self.backward_lstm.n_layers = len(backward_lstm_units)
 		self.backward_lstm.apply_dropout = conf.lstm_apply_dropout
 
-		self.char_embed = L.EmbedID(conf.n_vocab, conf.ndim_char_embed)
+		self.char_embed = L.EmbedID(conf.n_vocab, conf.ndim_char_embed, ignore_label=-1)
 
 		self.f_ym = L.Linear(conf.lstm_hidden_units[-1] * 2, conf.ndim_m, nobias=True)
 		self.f_um = L.Linear(conf.lstm_hidden_units[-1] * 2, conf.ndim_m, nobias=True)
 
 		attention_fc_attributes = {}
-		attention_fc_hidden_units = [(conf.ndim_m, conf.attention_fc_hidden_units[0])]
-		attention_fc_hidden_units += zip(conf.attention_fc_hidden_units[:-1], conf.attention_fc_hidden_units[1:])
-		attention_fc_hidden_units += [(conf.attention_fc_hidden_units[-1], 1)]
+		if len(conf.attention_fc_hidden_units) == 0:
+			attention_fc_hidden_units = [(conf.ndim_m, 1)]
+		else:
+			attention_fc_hidden_units = [(conf.ndim_m, conf.attention_fc_hidden_units[0])]
+			attention_fc_hidden_units += zip(conf.attention_fc_hidden_units[:-1], conf.attention_fc_hidden_units[1:])
+			attention_fc_hidden_units += [(conf.attention_fc_hidden_units[-1], 1)]
 		for i, (n_in, n_out) in enumerate(attention_fc_hidden_units):
 			attention_fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
 		self.attention_fc = FullyConnectedNetwork(**attention_fc_attributes)
@@ -264,30 +271,35 @@ class AttentiveReader:
 		self.optimizer_reader_fc.setup(self.reader_fc)
 		self.optimizer_reader_fc.add_hook(GradientClipping(gradiend_clip))
 
-	def encode(self, x_seq, test=False):
-		self.reset_state()
+	def encode_forward(self, x_seq, test=False):
+		self.forward_lstm.reset_state()
 		xp = self.xp
 		forward_context = []
-		backward_context = []
-		if x_seq.shape[1] < 1:
-			return None, None
-		for char in x_seq:
-			print x_seq
-			char = Variable(xp.array([char], dtype=xp.int32))
+		for pos in xrange(x_seq.shape[1]):
+			char = Variable(x_seq[:,pos].astype(xp.int32))
 			embed = self.char_embed(char)
 			y = self.forward_lstm(embed, test=test)
 			forward_context.append(y)
+		return forward_context, forward_context[-1]
 
-		for char in x_seq[::-1]:
-			char = Variable(xp.array([char], dtype=xp.int32))
+	def encode_backward(self, x_seq, test=False):
+		self.backward_lstm.reset_state()
+		xp = self.xp
+		backward_context = []
+		for pos in xrange(x_seq.shape[1]):
+			char = Variable(x_seq[:,-pos-1].astype(xp.int32))
 			embed = self.char_embed(char)
 			y = self.backward_lstm(embed, test=test)
 			backward_context.append(y)
+		return backward_context, backward_context[-1]
 
-		length = len(x_seq)
+	def encode(self, x_seq, test=False):
+		forward_context, _ = self.encode_forward(x_seq, test=test)
+		backward_context, _ = self.encode_backward(x_seq, test=test)
+		length = x_seq.shape[1]
 		context = []
 		for t in xrange(length):
-			yd_t = concat_variables(forward_context[t], backward_context[length - t - 1])
+			yd_t = concat_variables(forward_context[t], backward_context[t])
 			context.append(yd_t)
 		encode = concat_variables(forward_context[-1], backward_context[-1])
 		return context, encode
@@ -321,29 +333,27 @@ class AttentiveReader:
 		self.forward_lstm.reset_state()
 		self.backward_lstm.reset_state()
 
-	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True):
+	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True, softmax=False):
 		self.reset_state()
 		xp = self.xp
-		x_seq = xp.asanyarray(x_seq)
-		length = len(x_seq)
+		length = x_seq.shape[1]
 		if length < 1:
 			if concat_weight:
 				return None, None
 			else:
 				return None, None, None, None
 		sum_loss = 0
-		target_char = x_seq[pos]
 		former = None
 		latter = None
 		attention_sum = 0
 
 		if pos == 0:
-			latter = x_seq[1:]
+			latter = x_seq[:,1:]
 		elif pos == length - 1:
-			former = x_seq[:pos]
+			former = x_seq[:,:pos]
 		else:
-			former = x_seq[:pos]
-			latter = x_seq[pos + 1:]
+			former = x_seq[:,:pos]
+			latter = x_seq[:,pos + 1:]
 
 		former_context = None
 		latter_context = None
@@ -372,21 +382,25 @@ class AttentiveReader:
 		predicted_char_bef_softmax = self.reader_fc(g)
 
 		if concat_weight:
-			batchsize = 1
+			batchsize = x_seq.shape[0]
 			weight = xp.zeros((batchsize, length), dtype=xp.float32)
 			index = 0
 			if former_attention_weight is not None:
-				for i in xrange(len(former_attention_weight)):
+				f_length = len(former_attention_weight)
+				for i in xrange(f_length):
 					index = i
-					weight[:, i] = former_attention_weight[i].data
+					weight[:, f_length - i - 1] = former_attention_weight[i].data.reshape(-1)
 				index += 1
 			if latter_attention_weight is not None:
 				for i in xrange(len(latter_attention_weight)):
-					weight[:, index + i + 1] = latter_attention_weight[i].data
+					weight[:, index + i + 1] = latter_attention_weight[i].data.reshape(-1)
 			weight /= attention_sum.data
 			if xp is not np:
 				weight = cuda.to_cpu(weight)
-			return weight, predicted_char_bef_softmax
+			if softmax:
+				return weight, F.softmax(predicted_char_bef_softmax)
+			else:
+				return weight, predicted_char_bef_softmax
 		else:
 			return former_attention_weight, latter_attention_weight, attention_sum, predicted_char_bef_softmax
 
@@ -419,15 +433,12 @@ class AttentiveReader:
 		sum_loss = 0
 		for l in xrange(len(ignore_labels)):
 			x_seq_batch[x_seq_batch == ignore_labels[l]] = -1
-		if self.gpu:
-			x_seq_batch = cuda.to_gpu(x_seq_batch)
 		for pos in xrange(x_seq_batch.shape[1]):
 			target = x_seq_batch[:, pos]
 			_, char_distribution_bef_softmax = self.forward_one_step(x_seq_batch, pos, test=test)
 			if char_distribution_bef_softmax is None:
-				continue
+				return 0
 			loss = F.softmax_cross_entropy(char_distribution_bef_softmax, Variable(xp.asanyarray(target, dtype=xp.int32)))
-			print loss.data
 			sum_loss += loss.data
 			self.zero_grads()
 			loss.backward()
@@ -500,12 +511,14 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 
 		for i, (n_in, n_out) in enumerate(forward_lstm_units):
 			if conf.rnn_type == "dsgu":
-				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+				forward_lstm_attributes["layer_%i" % i] = StatefulDSGU(n_in, n_out)
 			elif conf.rnn_type == "lstm":
 				if conf.lstm_apply_batchnorm:
 					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
 				else:
 					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+			elif conf.rnn_type == "gru":
+				forward_lstm_attributes["layer_%i" % i] = L.StatefulGRU(n_in, n_out)
 			else:
 				raise NotImplementedError()
 
@@ -519,12 +532,14 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 
 		for i, (n_in, n_out) in enumerate(backward_lstm_units):
 			if conf.rnn_type == "dsgu":
-				forward_lstm_attributes["layer_%i" % i] = DSGU(n_in, n_out)
+				backward_lstm_attributes["layer_%i" % i] = StatefulDSGU(n_in, n_out)
 			elif conf.rnn_type == "lstm":
 				if conf.lstm_apply_batchnorm:
-					forward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+					backward_lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
 				else:
-					forward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+					backward_lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+			elif conf.rnn_type == "gru":
+				backward_lstm_attributes["layer_%i" % i] = L.StatefulGRU(n_in, n_out)
 			else:
 				raise NotImplementedError()
 
@@ -532,7 +547,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		self.backward_lstm.n_layers = len(backward_lstm_units)
 		self.backward_lstm.apply_dropout = conf.lstm_apply_dropout
 
-		self.char_embed = L.EmbedID(conf.n_vocab, conf.ndim_char_embed)
+		self.char_embed = L.EmbedID(conf.n_vocab, conf.ndim_char_embed, ignore_label=-1)
 
 		self.f_ym = L.Linear(conf.lstm_hidden_units[-1], conf.ndim_m, nobias=True)
 		self.f_um = L.Linear(conf.lstm_hidden_units[-1], conf.ndim_m, nobias=True)
@@ -618,7 +633,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		self.optimizer_reader_fc.add_hook(GradientClipping(10.0))
 
 	def encode_forward(self, x_seq, test=False):
-		self.reset_state()
+		self.forward_lstm.reset_state()
 		xp = self.xp
 		forward_context = []
 		for pos in xrange(x_seq.shape[1]):
@@ -629,7 +644,7 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		return forward_context, forward_context[-1]
 
 	def encode_backward(self, x_seq, test=False):
-		self.reset_state()
+		self.backward_lstm.reset_state()
 		xp = self.xp
 		backward_context = []
 		for pos in xrange(x_seq.shape[1]):
@@ -655,10 +670,11 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 		return weights, attention_sum
 
 	def forward_one_step(self, x_seq, pos, test=True, concat_weight=True, softmax=False):
-		start_time = time.time()
 		self.reset_state()
 		xp = self.xp
 		length = x_seq.shape[1]
+		if self.gpu:
+			x_seq = cuda.to_gpu(x_seq)
 		if length < 1:
 			if concat_weight:
 				return None, None
@@ -684,11 +700,11 @@ class MonoDirectionalAttentiveReader(AttentiveReader):
 
 		if former is not None:
 			former_context, former_encode = self.encode_backward(former, test=test)
-			former_attention_weight, former_attention_sum = self.attend(former_context, None, test=test)
+			former_attention_weight, former_attention_sum = self.attend(former_context, former_encode, test=test)
 			attention_sum += former_attention_sum
 		if latter is not None:
 			latter_context, latter_encode = self.encode_forward(latter, test=test)
-			latter_attention_weight, latter_attention_sum = self.attend(latter_context, None, test=test)
+			latter_attention_weight, latter_attention_sum = self.attend(latter_context, latter_encode, test=test)
 			attention_sum += latter_attention_sum
 
 		representation = 0

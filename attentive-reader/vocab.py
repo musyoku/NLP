@@ -10,7 +10,7 @@ def load(dir):
 	fs = os.listdir(dir)
 	print "loading", len(fs), "files..."
 	dataset = []
-	vocab["<eos>"] = 0
+	vocab["<"] = 0
 	for fn in fs:
 		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
 		for line in unko:

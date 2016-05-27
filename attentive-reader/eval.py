@@ -14,7 +14,7 @@ sns.set()
 # Windowsでprintする用
 sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharrefreplace")
 
-data_dir = "debug"
+data_dir = "alice"
 model_dir = "model"
 result_dir = "result"
 dataset, config.n_vocab, config.n_dataset = vocab.load(data_dir)
@@ -26,12 +26,14 @@ try:
 except:
 	pass
 
-def sample_data(limit=30):
+def sample_data(limit=-1):
 	length = limit + 1
 	while length > limit:
 		k = np.random.randint(0, config.n_dataset)
 		data = dataset[k]
 		length = len(data)
+		if limit == -1:
+			break
 	return data
 
 for repeat in xrange(20):
@@ -56,7 +58,7 @@ for repeat in xrange(20):
 	with sns.axes_style("white"):
 		pylab.figure(figsize=(16, 12))
 		ax = sns.heatmap(df_attention_pivot, annot=False, fmt="d", cmap="Blues", mask=mask, square=True, vmin=0.0, vmax=1.0)
-		ax.set_xticklabels(df_attention[df_attention.t == 0]["character"], size="x-large", fontproperties=fontprop)
+		ax.set_xticklabels(df_attention[df_attention.t == 0]["character"], size="medium", fontproperties=fontprop)
 		ax.set_yticklabels(np.arange(length, dtype=np.int32)[::-1], va="center")
 		ax.xaxis.tick_top()
 		filename = "%s/%d.png" % (result_dir, repeat)

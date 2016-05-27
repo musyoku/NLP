@@ -304,7 +304,7 @@ class AttentiveReader:
 				for i in xrange(len(latter_attention_weight)):
 					weight[:, index + i + 1] = latter_attention_weight[i].data
 			weight /= attention_sum.data
-			if xp is cuda.cupy:
+			if hasattr(cuda, "cupy") and xp is cuda.cupy:
 				weight = cuda.to_cpu(weight)
 			return weight, predicted_char_embed
 		else:
@@ -329,7 +329,7 @@ class AttentiveReader:
 		sum_loss.backward()
 		self.update()
 
-		if xp is cuda.cupy:
+		if hasattr(cuda, "cupy") and xp is cuda.cupy:
 			sum_loss.to_cpu()
 
 		return sum_loss.data
@@ -347,10 +347,10 @@ class AttentiveReader:
 				prop.update()
 
 	def inverse_embed(self, embed):
-		if self.xp is cuda.cupy:
+		if hasattr(cuda, "cupy") and self.xp is cuda.cupy:
 			embed = cuda.to_gpu(embed)
 		onehot = self.char_embed.W.data.dot(embed.reshape(-1, 1))
-		if self.xp is cuda.cupy:
+		if hasattr(cuda, "cupy") and self.xp is cuda.cupy:
 			onehot = cuda.to_cpu(onehot)
 		return onehot
 
@@ -582,7 +582,7 @@ class OneDirectionAttentiveReader(AttentiveReader):
 				for i in xrange(len(latter_attention_weight)):
 					weight[:, index + i + 1] = latter_attention_weight[i].data
 			weight /= attention_sum.data
-			if xp is cuda.cupy:
+			if hasattr(cuda, "cupy") and xp is cuda.cupy:
 				weight = cuda.to_cpu(weight)
 			return weight, predicted_char_embed
 		else:

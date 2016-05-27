@@ -2,14 +2,17 @@ import numpy
 
 import chainer
 from chainer import cuda
-from chainer.functions.activation import hard_sigmoid
 from chainer.functions.activation import sigmoid
 from chainer.functions.activation import softplus
 from chainer.functions.activation import tanh
+from chainer.functions.math import clip
 from chainer import link
 from chainer.links.connection import linear
 from chainer import variable
 
+
+def hard_sigmoid(x):
+    return clip.clip(x * 0.2 + 0.5, 0.0, 1.0)
 
 class SGU(link.Chain):
 
@@ -25,7 +28,7 @@ class SGU(link.Chain):
 		x_g = self.W_xh(x)
 		z_g = tanh.tanh(self.W_zxh(x_g * h))
 		z_out = softplus.softplus(z_g * h)
-		z_t = hard_sigmoid.hard_sigmoid(self.W_xz(x) + self.W_hz(h))
+		z_t = hard_sigmoid(self.W_xz(x) + self.W_hz(h))
 		h_t = (1 - z_t) * h + z_t * z_out
 		return h_t
 
@@ -65,7 +68,7 @@ class StatefulSGU(SGU):
 			xp = cuda.get_array_module(x)
 			zero = variable.Variable(xp.zeros_like(x.data))
 			z_out = softplus.softplus(zero)
-			z_t = hard_sigmoid.hard_sigmoid(self.W_xz(x))
+			z_t = hard_sigmoid(self.W_xz(x))
 			h_t = z_t * z_out
 		else:
 			h_t = SGU.__call__(self, self.h, x)
@@ -89,7 +92,7 @@ class DSGU(link.Chain):
 		x_g = self.W_xh(x)
 		z_g = tanh.tanh(self.W_zxh(x_g * h))
 		z_out = sigmoid.sigmoid(self.W_go(z_g * h))
-		z_t = hard_sigmoid.hard_sigmoid(self.W_xz(x) + self.W_hz(h))
+		z_t = hard_sigmoid(self.W_xz(x) + self.W_hz(h))
 		h_t = (1 - z_t) * h + z_t * z_out
 		return h_t
 
@@ -126,7 +129,7 @@ class StatefulDSGU(DSGU):
 	def __call__(self, x):
 
 		if self.h is None:
-			z_t = hard_sigmoid.hard_sigmoid(self.W_xz(x))
+			z_t = hard_sigmoid(self.W_xz(x))
 			h_t = z_t * 0.5
 		else:
 			h_t = DSGU.__call__(self, self.h, x)
