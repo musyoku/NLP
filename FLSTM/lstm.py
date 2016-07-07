@@ -2,6 +2,7 @@
 import os, time
 import numpy as np
 import chainer
+import collections, six
 from chainer import cuda, Variable, optimizers, serializers, function, link
 from chainer.utils import type_check
 from chainer import functions as F
@@ -46,8 +47,6 @@ class Conf:
 	def check(self):
 		if len(self.lstm_hidden_units) < 1:
 			raise Exception("You need to add one or more hidden layers to LSTM network.")
-		if len(self.fc_hidden_units) < 1:
-			raise Exception("You need to add one or more hidden layers to fully-connected network.")
 
 class LSTMNetwork(chainer.Chain):
 	def __init__(self, **layers):
@@ -90,9 +89,9 @@ class FullyConnectedNetwork(chainer.Chain):
 		# Hidden layers
 		for i in range(self.n_layers):
 			u = chain[-1]
+			u = getattr(self, "layer_%i" % i)(u)
 			if self.apply_batchnorm:
 				u = getattr(self, "batchnorm_%i" % i)(u, test=test)
-			u = getattr(self, "layer_%i" % i)(u)
 			output = f(u)
 			if self.apply_dropout and i != self.n_layers - 1:
 				output = F.dropout(output, train=not test)
@@ -105,18 +104,21 @@ class FullyConnectedNetwork(chainer.Chain):
 
 class FLSTM(L.LSTM):
 
-    def __call__(self, x, f):
-        lstm_in = self.upward(x)
-        if self.h is not None:
-            lstm_in += self.lateral(self.h)
-        if self.c is None:
-            xp = self.xp
-            self.c = variable.Variable(
-                xp.zeros((len(x.data), self.state_size), dtype=x.data.dtype),
-                volatile='auto')
-        self.c, self.h = lstm.lstm(self.c, lstm_in)
-        self.h = apply_attention(self.h, f)
-        return self.h
+	def __call__(self, x, f):
+		lstm_in = self.upward(x)
+		if self.h is not None:
+			if f is None:
+				lstm_in += self.lateral(self.h)
+			else:
+				# lstm_in += self.lateral(self.h)
+				lstm_in += apply_attention(self.lateral(self.h), f)
+		if self.c is None:
+			xp = self.xp
+			self.c = Variable(
+				xp.zeros((len(x.data), self.state_size), dtype=x.data.dtype),
+				volatile='auto')
+		self.c, self.h = F.lstm(self.c, lstm_in)
+		return self.h
 
 class Attention(function.Function):
 	def check_type_forward(self, in_types):
@@ -144,6 +146,32 @@ class Attention(function.Function):
 
 def apply_attention(context, weight):
 	return Attention()(context, weight)
+	
+def sum_sqnorm(arr):
+	sq_sum = collections.defaultdict(float)
+	for x in arr:
+		with cuda.get_device(x) as dev:
+			x = x.ravel()
+			s = x.dot(x)
+			sq_sum[int(dev)] += s
+	return sum([float(i) for i in six.itervalues(sq_sum)])
+	
+class GradientClipping(object):
+	name = "GradientClipping"
+
+	def __init__(self, threshold):
+		self.threshold = threshold
+
+	def __call__(self, opt):
+		norm = np.sqrt(sum_sqnorm([p.grad for p in opt.target.params()]))
+		if norm == 0:
+			return
+		rate = self.threshold / norm
+		if rate < 1:
+			for param in opt.target.params():
+				grad = param.grad
+				with cuda.get_device(grad):
+					grad *= rate
 
 class LSTM:
 	OUTPUT_TYPE_SOFTMAX = 1
@@ -154,19 +182,22 @@ class LSTM:
 		self.name = name
 		self.optimizer_lstm = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_lstm.setup(self.lstm)
-		self.optimizer_lstm.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_lstm.add_hook(GradientClipping(10.0))
 
-		self.optimizer_fc = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
-		self.optimizer_fc.setup(self.fc)
-		self.optimizer_fc.add_hook(chainer.optimizer.GradientClipping(10.0))
+		if self.fc is not None:
+			self.optimizer_fc = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
+			self.optimizer_fc.setup(self.fc)
+			self.optimizer_fc.add_hook(GradientClipping(10.0))
 
 		self.optimizer_forget = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_forget.setup(self.forget)
-		self.optimizer_forget.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_forget.add_hook(GradientClipping(10.0))
+
+		self.prev_forget = None
 
 		self.optimizer_embed_id = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_embed_id.setup(self.embed_id)
-		self.optimizer_embed_id.add_hook(chainer.optimizer.GradientClipping(10.0))
+		self.optimizer_embed_id.add_hook(GradientClipping(10.0))
 
 	def build(self, conf):
 		conf.check()
@@ -192,27 +223,30 @@ class LSTM:
 		if conf.use_gpu:
 			lstm.to_gpu()
 
-		fc_attributes = {}
-		fc_units = [(conf.lstm_hidden_units[-1], conf.fc_hidden_units[0])]
-		fc_units += zip(conf.fc_hidden_units[:-1], conf.fc_hidden_units[1:])
-		if conf.fc_output_type == self.OUTPUT_TYPE_EMBED_VECTOR:
-			fc_units += [(conf.fc_hidden_units[-1], conf.embed_size)]
-		elif conf.fc_output_type == self.OUTPUT_TYPE_SOFTMAX:
-			fc_units += [(conf.fc_hidden_units[-1], conf.n_vocab)]
+		if len(conf.fc_hidden_units) > 0:
+			fc_attributes = {}
+			fc_units = [(conf.lstm_hidden_units[-1], conf.fc_hidden_units[0])]
+			fc_units += zip(conf.fc_hidden_units[:-1], conf.fc_hidden_units[1:])
+			if conf.fc_output_type == self.OUTPUT_TYPE_EMBED_VECTOR:
+				fc_units += [(conf.fc_hidden_units[-1], conf.embed_size)]
+			elif conf.fc_output_type == self.OUTPUT_TYPE_SOFTMAX:
+				fc_units += [(conf.fc_hidden_units[-1], conf.n_vocab)]
+			else:
+				raise Exception()
+
+			for i, (n_in, n_out) in enumerate(fc_units):
+				fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+				fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
+
+			fc = FullyConnectedNetwork(**fc_attributes)
+			fc.n_layers = len(fc_units)
+			fc.activation_function = conf.fc_activation_function
+			fc.apply_batchnorm = conf.fc_apply_batchnorm
+			fc.apply_dropout = conf.fc_apply_dropout
+			if conf.use_gpu:
+				fc.to_gpu()
 		else:
-			raise Exception()
-
-		for i, (n_in, n_out) in enumerate(fc_units):
-			fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-			fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
-
-		fc = FullyConnectedNetwork(**fc_attributes)
-		fc.n_layers = len(fc_units)
-		fc.activation_function = conf.fc_activation_function
-		fc.apply_batchnorm = conf.fc_apply_batchnorm
-		fc.apply_dropout = conf.fc_apply_dropout
-		if conf.use_gpu:
-			fc.to_gpu()
+			fc = None
 
 		forget_attributes = {}
 		forget_units = [(conf.lstm_hidden_units[-1], conf.forget_hidden_units[0])]
@@ -221,7 +255,7 @@ class LSTM:
 
 		for i, (n_in, n_out) in enumerate(forget_units):
 			forget_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
-			forget_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_in)
+			forget_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
 
 		forget = FullyConnectedNetwork(**forget_attributes)
 		forget.n_layers = len(forget_units)
@@ -235,9 +269,10 @@ class LSTM:
 
 	def __call__(self, x, test=False, softmax=True):
 		output = self.embed_id(x)
-		forget = self.forget(x)
-		output = self.lstm(output, forget, test=test)
-		output = self.fc(output, test=test)
+		output = self.lstm(output, self.prev_forget, test=test)
+		self.prev_forget = F.sigmoid(self.forget(output))
+		if self.fc is not None:
+			output = self.fc(output, test=test)
 		if softmax and self.output_type == self.OUTPUT_TYPE_SOFTMAX:
 			output = F.softmax(output)
 		return output
@@ -306,13 +341,17 @@ class LSTM:
 
 	def zero_grads(self):
 		self.optimizer_lstm.zero_grads()
-		self.optimizer_fc.zero_grads()
+		if self.fc is not None:
+			self.optimizer_fc.zero_grads()
 		self.optimizer_embed_id.zero_grads()
+		self.optimizer_forget.zero_grads()
 
 	def update(self):
 		self.optimizer_lstm.update()
-		self.optimizer_fc.update()
+		if self.fc is not None:
+			self.optimizer_fc.update()
 		self.optimizer_embed_id.update()
+		self.optimizer_forget.update()
 
 	def should_save(self, prop):
 		if isinstance(prop, chainer.Chain) or isinstance(prop, chainer.optimizer.GradientMethod) or isinstance(prop, EmbedID):

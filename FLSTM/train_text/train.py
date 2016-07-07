@@ -7,7 +7,7 @@ from env import dataset, n_vocab, n_dataset, lstm, conf
 
 n_epoch = 1000
 n_train = 1000
-batchsize = 64
+batchsize = 32
 total_time = 0
 
 # 長すぎるデータはメモリに乗らないこともあります
