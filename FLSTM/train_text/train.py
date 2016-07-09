@@ -6,7 +6,7 @@ from args import args
 from env import dataset, n_vocab, n_dataset, lstm, conf
 
 n_epoch = 1000
-n_train = 1000
+n_train = 500
 batchsize = 32
 total_time = 0
 
@@ -18,7 +18,7 @@ max_length_of_chars = 100
 current_length_limit = 15
 increasing_limit_interval = 1000
 
-def make_batch():
+def make_batch(batchsize):
 	batch_array = []
 	max_length_in_batch = 0
 	for b in xrange(batchsize):
@@ -30,7 +30,7 @@ def make_batch():
 		batch_array.append(data)
 		if length > max_length_in_batch:
 			max_length_in_batch = length
-	batch = np.full((batchsize, max_length_in_batch), -1.0, dtype=np.float32)
+	batch = np.full((batchsize, max_length_in_batch), -1.0, dtype=np.int32)
 	for i, data in enumerate(batch_array):
 		batch[i,:len(data)] = data
 	return batch
@@ -48,7 +48,7 @@ for epoch in xrange(n_epoch):
 	start_time = time.time()
 	sum_loss = 0
 	for t in xrange(n_train):
-		batch = make_batch()
+		batch = make_batch(batchsize)
 		sum_loss += lstm.train(batch)
 		if t % 10 == 0:
 			sys.stdout.write("\rLearning in progress...({:d} / {:d})".format(t, n_train))
@@ -63,15 +63,20 @@ for epoch in xrange(n_epoch):
 		current_length_limit = (current_length_limit + 5) if current_length_limit < max_length_of_chars else max_length_of_chars
 
 	# Validation
-	num_validation = 500
+	num_validation = 10
+	validation_batchsize = 64
 	correct = 0
+	num_valid_chars = 0
 	for i in xrange(num_validation):
 		lstm.reset_state()
-		phrase = get_validation_data()
-		for n in xrange(len(phrase)):
-			char = phrase[n]
-			dist = lstm.predict(char, test=True)
-			if char == dist:
-				correct += 1
-	print "validation: {:.3f}".format(correct / float(num_validation) / float(len(phrase)))
-
+		phrase = make_batch(validation_batchsize)
+		result, forgets = lstm.predict_all(phrase, test=True, argmax=True)
+		for j in xrange(len(result)):
+			for b in xrange(validation_batchsize):
+				cp = result[j][b]
+				cc = phrase[b, j]
+				if cc != -1:
+					num_valid_chars += 1
+					if cp == cc:
+						correct += 1
+	print "validation: {:.3f}".format(correct / float(num_validation * validation_batchsize) / float(num_valid_chars))

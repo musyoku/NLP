@@ -33,4 +33,5 @@ for phrase in xrange(100):
 		if id == 0:
 			break
 		char = id
+		print lstm.prev_forget.data
 	print str

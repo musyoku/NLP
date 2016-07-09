@@ -54,12 +54,12 @@ class LSTMNetwork(chainer.Chain):
 		self.n_layers = 0
 		self.apply_dropout = False
 
-	def forward_one_step(self, x, forget, test):
+	def forward_one_step(self, x, test):
 		chain = [x]
 
 		# Hidden layers
 		for i in range(self.n_layers):
-			u = getattr(self, "layer_%i" % i)(chain[-1], forget)
+			u = getattr(self, "layer_%i" % i)(chain[-1])
 			output = u
 			if self.apply_dropout:
 				output = F.dropout(output, train=not test)
@@ -71,8 +71,8 @@ class LSTMNetwork(chainer.Chain):
 		for i in range(self.n_layers):
 			getattr(self, "layer_%i" % i).reset_state()
 
-	def __call__(self, x, forget, test=False):
-		return self.forward_one_step(x, forget, test=test)
+	def __call__(self, x, test=False):
+		return self.forward_one_step(x, test=test)
 
 class FullyConnectedNetwork(chainer.Chain):
 	def __init__(self, **layers):
@@ -104,19 +104,13 @@ class FullyConnectedNetwork(chainer.Chain):
 
 class FLSTM(L.LSTM):
 
-	def __call__(self, x, f):
+	def __call__(self, x):
 		lstm_in = self.upward(x)
 		if self.h is not None:
-			if f is None:
-				lstm_in += self.lateral(self.h)
-			else:
-				# lstm_in += self.lateral(self.h)
-				lstm_in += apply_attention(self.lateral(self.h), f)
+			lstm_in += self.lateral(self.h)
 		if self.c is None:
 			xp = self.xp
-			self.c = Variable(
-				xp.zeros((len(x.data), self.state_size), dtype=x.data.dtype),
-				volatile='auto')
+			self.c = Variable(xp.zeros((len(x.data), self.state_size), dtype=x.data.dtype),	volatile="auto")
 		self.c, self.h = F.lstm(self.c, lstm_in)
 		return self.h
 
@@ -178,11 +172,16 @@ class LSTM:
 	OUTPUT_TYPE_EMBED_VECTOR = 2
 	def __init__(self, conf, name="lstm"):
 		self.output_type = conf.fc_output_type
-		self.embed_id, self.lstm, self.fc, self.forget = self.build(conf)
+		self.embed_id, self.forward_lstm, self.backward_lstm, self.fc, self.forget = self.build(conf)
 		self.name = name
-		self.optimizer_lstm = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
-		self.optimizer_lstm.setup(self.lstm)
-		self.optimizer_lstm.add_hook(GradientClipping(10.0))
+
+		self.optimizer_forward_lstm = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
+		self.optimizer_forward_lstm.setup(self.forward_lstm)
+		self.optimizer_forward_lstm.add_hook(GradientClipping(10.0))
+
+		self.optimizer_backward_lstm = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
+		self.optimizer_backward_lstm.setup(self.backward_lstm)
+		self.optimizer_backward_lstm.add_hook(GradientClipping(10.0))
 
 		if self.fc is not None:
 			self.optimizer_fc = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
@@ -217,11 +216,26 @@ class LSTM:
 			else:
 				lstm_attributes["layer_%i" % i] = FLSTM(n_in, n_out)
 
-		lstm = LSTMNetwork(**lstm_attributes)
-		lstm.n_layers = len(lstm_units)
-		lstm.apply_dropout = conf.lstm_apply_dropout
+		forward_lstm = LSTMNetwork(**lstm_attributes)
+		forward_lstm.n_layers = len(lstm_units)
+		forward_lstm.apply_dropout = conf.lstm_apply_dropout
 		if conf.use_gpu:
-			lstm.to_gpu()
+			forward_lstm.to_gpu()
+
+		lstm_attributes = {}
+		lstm_units = [(conf.embed_size, conf.lstm_hidden_units[0])]
+		lstm_units += zip(conf.lstm_hidden_units[:-1], conf.lstm_hidden_units[1:])
+
+		for i, (n_in, n_out) in enumerate(lstm_units):
+			if conf.lstm_apply_batchnorm:
+				lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			else:
+				lstm_attributes["layer_%i" % i] = FLSTM(n_in, n_out)
+		backward_lstm = LSTMNetwork(**lstm_attributes)
+		backward_lstm.n_layers = len(lstm_units)
+		backward_lstm.apply_dropout = conf.lstm_apply_dropout
+		if conf.use_gpu:
+			backward_lstm.to_gpu()
 
 		if len(conf.fc_hidden_units) > 0:
 			fc_attributes = {}
@@ -249,7 +263,7 @@ class LSTM:
 			fc = None
 
 		forget_attributes = {}
-		forget_units = [(conf.lstm_hidden_units[-1], conf.forget_hidden_units[0])]
+		forget_units = [(conf.lstm_hidden_units[-1] * 2, conf.forget_hidden_units[0])]
 		forget_units += zip(conf.forget_hidden_units[:-1], conf.forget_hidden_units[1:])
 		forget_units += [(conf.forget_hidden_units[-1], 1)]
 
@@ -265,7 +279,7 @@ class LSTM:
 		if conf.use_gpu:
 			forget.to_gpu()
 
-		return embed_id, lstm, fc, forget
+		return embed_id, forward_lstm, backward_lstm, fc, forget
 
 	def __call__(self, x, test=False, softmax=True):
 		output = self.embed_id(x)
@@ -277,16 +291,28 @@ class LSTM:
 			output = F.softmax(output)
 		return output
 
+	def forward_lstm_one_step(self, x, test=False):
+		output = self.embed_id(x)
+		output = self.forward_lstm(output, test=test)
+		return output
+
+	def backward_lstm_one_step(self, x, test=False):
+		output = self.embed_id(x)
+		output = self.backward_lstm(output, test=test)
+		return output
+
 	@property
 	def xp(self):
-		return np if self.lstm.layer_0._cpu else cuda.cupy
+		return np if self.forward_lstm.layer_0._cpu else cuda.cupy
 
 	@property
 	def gpu(self):
 		return True if self.xp is cuda.cupy else False
 
 	def reset_state(self):
-		self.lstm.reset_state()
+		self.forward_lstm.reset_state()
+		self.backward_lstm.reset_state()
+		self.prev_forget = None
 
 	def predict(self, word, test=True, argmax=False):
 		xp = self.xp
@@ -307,6 +333,40 @@ class LSTM:
 				ids = self.embed_id.reverse(output.data, to_cpu=True, sample=True)
 		return ids[0]
 
+	def predict_all(self, seq_batch, test=True, argmax=True):
+		self.reset_state()
+		forward_h, backward_h = self.scan(seq_batch, test=test)
+		xp = self.xp
+		seq_batch = seq_batch.T
+		result = []
+		forgets = []
+
+		for i in xrange(len(forward_h)):
+			fh = forward_h[i]
+			bh = backward_h[i]
+			c = seq_batch[i]
+			c = Variable(xp.asanyarray(c, dtype=np.int32))
+			if fh is None:
+				fh = Variable(xp.zeros(bh.data.shape, dtype=xp.float32))
+			if bh is None:
+				bh = Variable(xp.zeros(fh.data.shape, dtype=xp.float32))
+			h = F.concat((fh, bh))
+			forget = F.sigmoid(self.forget(h, test=test))
+			out = apply_attention(fh, forget) + apply_attention(bh, 1 - forget)
+			if self.fc is not None:
+				out = self.fc(out, test=test)
+
+			out = F.softmax(out)
+			if xp is cuda.cupy:
+				out.to_cpu()
+			if argmax:
+				ids = np.argmax(out.data, axis=1)
+			else:
+				ids = [np.random.choice(np.arange(out.data.shape[1]), p=output.data[0])]
+			result.append(ids)
+			forgets.append(forget)
+		return result, forgets
+
 	def distribution(self, word, test=True):
 		xp = self.xp
 		c0 = Variable(xp.asarray([word], dtype=np.int32))
@@ -317,21 +377,29 @@ class LSTM:
 
 	def train(self, seq_batch, test=False):
 		self.reset_state()
+		forward_h, backward_h = self.scan(seq_batch, test=test)
 		xp = self.xp
 		sum_loss = 0
 		seq_batch = seq_batch.T
-		for c0, c1 in zip(seq_batch[:-1], seq_batch[1:]):
-			c0 = Variable(xp.asanyarray(c0, dtype=np.int32))
-			c1 = Variable(xp.asanyarray(c1, dtype=np.int32))
-			output = self(c0, test=test, softmax=False)
-			if self.output_type == self.OUTPUT_TYPE_SOFTMAX:
-				loss = F.softmax_cross_entropy(output, c1)
-			elif self.output_type == self.OUTPUT_TYPE_EMBED_VECTOR:
-				target = Variable(self.embed_id(c1).data)
-				loss = F.mean_squared_error(output, target)
-			else:
-				raise Exception()
+
+		for i in xrange(len(forward_h)):
+			fh = forward_h[i]
+			bh = backward_h[i]
+			c = seq_batch[i]
+			c = Variable(xp.asanyarray(c, dtype=np.int32))
+			if fh is None:
+				fh = Variable(xp.zeros(bh.data.shape, dtype=xp.float32))
+			if bh is None:
+				bh = Variable(xp.zeros(fh.data.shape, dtype=xp.float32))
+			h = F.concat((fh, bh))
+			forget = F.sigmoid(self.forget(h, test=test))
+			out = apply_attention(fh, forget) + apply_attention(bh, 1 - forget)
+			if self.fc is not None:
+				out = self.fc(out, test=test)
+
+			loss = F.softmax_cross_entropy(out, c)
 			sum_loss += loss
+
 		self.zero_grads()
 		sum_loss.backward()
 		self.update()
@@ -339,15 +407,41 @@ class LSTM:
 			sum_loss.to_cpu()
 		return sum_loss.data
 
+	def scan(self, seq_batch, test=False):
+		forward_h = []
+		backward_h = []
+		self.reset_state()
+		xp = self.xp
+		seq_batch = seq_batch.T
+
+		forward_h.append(None)
+		for i in xrange(seq_batch.shape[0] - 1):
+			c0 = seq_batch[i]
+			c0 = Variable(xp.asanyarray(c0, dtype=np.int32))
+			output = self.forward_lstm_one_step(c0, test=test)
+			forward_h.append(output)
+
+		backward_h.append(None)
+		for i in xrange(seq_batch.shape[0] - 1):
+			c0 = seq_batch[-i-1]
+			c0 = Variable(xp.asanyarray(c0, dtype=np.int32))
+			output = self.backward_lstm_one_step(c0, test=test)
+			backward_h.append(output)
+
+		backward_h.reverse()
+		return forward_h, backward_h
+
 	def zero_grads(self):
-		self.optimizer_lstm.zero_grads()
+		self.optimizer_forward_lstm.zero_grads()
+		self.optimizer_backward_lstm.zero_grads()
 		if self.fc is not None:
 			self.optimizer_fc.zero_grads()
 		self.optimizer_embed_id.zero_grads()
 		self.optimizer_forget.zero_grads()
 
 	def update(self):
-		self.optimizer_lstm.update()
+		self.optimizer_forward_lstm.update()
+		self.optimizer_backward_lstm.update()
 		if self.fc is not None:
 			self.optimizer_fc.update()
 		self.optimizer_embed_id.update()
