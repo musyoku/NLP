@@ -130,16 +130,21 @@ class Attention(function.Function):
 	def forward(self, inputs):
 		xp = cuda.get_array_module(inputs[0])
 		context, weight = inputs
-		output = context * weight
+		output = context * weight[:, self.index].reshape(-1, 1)
 		return output,
 
 	def backward(self, inputs, grad_outputs):
 		xp = cuda.get_array_module(inputs[0])
 		context, weight = inputs
-		return grad_outputs[0] * weight, xp.sum(grad_outputs[0] * context, axis=1).reshape(-1, 1)
+		weight = weight[:, self.index].reshape(-1, 1)
+		z = xp.zeros((context.shape[0], 2), dtype=xp.float32)
+		z[:, self.index] = xp.sum(grad_outputs[0] * context, axis=1)
+		return grad_outputs[0] * weight, z
 
-def apply_attention(context, weight):
-	return Attention()(context, weight)
+def apply_attention(context, weight, index=0):
+	attention = Attention()
+	attention.index = index
+	return attention(context, weight)
 	
 def sum_sqnorm(arr):
 	sq_sum = collections.defaultdict(float)
@@ -265,7 +270,7 @@ class LSTM:
 		forget_attributes = {}
 		forget_units = [(conf.lstm_hidden_units[-1] * 2, conf.forget_hidden_units[0])]
 		forget_units += zip(conf.forget_hidden_units[:-1], conf.forget_hidden_units[1:])
-		forget_units += [(conf.forget_hidden_units[-1], 1)]
+		forget_units += [(conf.forget_hidden_units[-1], 2)]
 
 		for i, (n_in, n_out) in enumerate(forget_units):
 			forget_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
@@ -351,8 +356,9 @@ class LSTM:
 			if bh is None:
 				bh = Variable(xp.zeros(fh.data.shape, dtype=xp.float32))
 			h = F.concat((fh, bh))
-			forget = F.sigmoid(self.forget(h, test=test))
-			out = apply_attention(fh, forget) + apply_attention(bh, 1 - forget)
+			forget = self.forget(h, test=test)
+			forget = F.softmax(forget)
+			out = apply_attention(fh, forget, 0) + apply_attention(fh, forget, 1)
 			if self.fc is not None:
 				out = self.fc(out, test=test)
 
@@ -392,8 +398,9 @@ class LSTM:
 			if bh is None:
 				bh = Variable(xp.zeros(fh.data.shape, dtype=xp.float32))
 			h = F.concat((fh, bh))
-			forget = F.sigmoid(self.forget(h, test=test))
-			out = apply_attention(fh, forget) + apply_attention(bh, 1 - forget)
+			forget = self.forget(h, test=test)
+			forget = F.softmax(forget)
+			out = apply_attention(fh, forget, 0) + apply_attention(fh, forget, 1)
 			if self.fc is not None:
 				out = self.fc(out, test=test)
 
