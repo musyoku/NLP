@@ -49,6 +49,7 @@ for epoch in xrange(n_epoch):
 	sum_loss = 0
 	for t in xrange(n_train):
 		batch = make_batch(batchsize)
+		print batch.shape
 		sum_loss += lstm.train(batch)
 		if t % 10 == 0:
 			sys.stdout.write("\rLearning in progress...({:d} / {:d})".format(t, n_train))

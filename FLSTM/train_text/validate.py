@@ -10,7 +10,7 @@ from env import dataset, n_vocab, n_dataset, lstm, conf
 sys.stdout = codecs.getwriter(sys.stdout.encoding)(sys.stdout, errors="xmlcharrefreplace")
 
 # 学習時に長さ制限した場合は同じ値をここにもセット
-current_length_limit = 150
+current_length_limit = 50
 
 def make_batch(batchsize):
 	batch_array = []
@@ -40,7 +40,7 @@ def get_validation_data():
 
 
 # Validation
-validation_batchsize = 1
+validation_batchsize = 10
 lstm.reset_state()
 phrase = make_batch(validation_batchsize)
 result, forgets = lstm.predict_all(phrase, test=True, argmax=True)
@@ -61,7 +61,7 @@ for b in xrange(validation_batchsize):
 		cc = phrase[b, j]
 		if cc < 1:
 			break
-		print f
+		print f[b]
 		str += vocab.id_to_word(cp)
 	print str
 

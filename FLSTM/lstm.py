@@ -197,8 +197,6 @@ class LSTM:
 		self.optimizer_forget.setup(self.forget)
 		self.optimizer_forget.add_hook(GradientClipping(10.0))
 
-		self.prev_forget = None
-
 		self.optimizer_embed_id = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_embed_id.setup(self.embed_id)
 		self.optimizer_embed_id.add_hook(GradientClipping(10.0))
@@ -358,7 +356,7 @@ class LSTM:
 			h = F.concat((fh, bh))
 			forget = self.forget(h, test=test)
 			forget = F.softmax(forget)
-			out = apply_attention(fh, forget, 0) + apply_attention(fh, forget, 1)
+			out = apply_attention(fh, forget, 0) + apply_attention(bh, forget, 1)
 			if self.fc is not None:
 				out = self.fc(out, test=test)
 
@@ -394,17 +392,21 @@ class LSTM:
 			c = seq_batch[i]
 			c = Variable(xp.asanyarray(c, dtype=np.int32))
 			if fh is None:
-				fh = Variable(xp.zeros(bh.data.shape, dtype=xp.float32))
-			if bh is None:
-				bh = Variable(xp.zeros(fh.data.shape, dtype=xp.float32))
-			h = F.concat((fh, bh))
-			forget = self.forget(h, test=test)
-			forget = F.softmax(forget)
-			out = apply_attention(fh, forget, 0) + apply_attention(fh, forget, 1)
+				out = bh
+			elif bh is None:
+				out = fh
+			else:
+				h = F.concat((fh, bh))
+				forget = self.forget(h, test=test)
+				forget = F.softmax(forget)
+				out = apply_attention(fh, forget, 0) + apply_attention(bh, forget, 1)
 			if self.fc is not None:
 				out = self.fc(out, test=test)
-
-			loss = F.softmax_cross_entropy(out, c)
+			entropy = 0
+			if fh is not None and bh is not None:
+				entropy = -forget * F.log(forget + 1e-6)
+				entropy = F.sum(entropy)
+			loss = F.softmax_cross_entropy(out, c) + entropy
 			sum_loss += loss
 
 		self.zero_grads()

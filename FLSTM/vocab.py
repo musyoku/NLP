@@ -11,6 +11,7 @@ def load(dir):
 	print "loading", len(fs), "files..."
 	dataset = []
 	vocab["<eos>"] = 0
+	inv_vocab[0] = "<eos>"
 	for fn in fs:
 		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
 		for line in unko:
