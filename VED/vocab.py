@@ -6,25 +6,31 @@ import codecs
 vocab = {}
 inv_vocab = {}
 
+eos_id = 0
+bos_id = 1
+	
 def load(dir):
 	fs = os.listdir(dir)
 	print "loading", len(fs), "files..."
 	dataset = []
-	vocab["<eos>"] = 0
-	inv_vocab[0] = "<eos>"
+	vocab["<eos>"] = eos_id
+	inv_vocab[eos_id] = "<eos>"
+	vocab["<bos>"] = bos_id
+	inv_vocab[bos_id] = "<bos>"
 	for fn in fs:
 		unko = codecs.open("%s/%s" % (dir, fn), "r", "utf_8_sig")	# BOMありならutf_8_sig　そうでないならutf_8
 		for line in unko:
 			line = line.replace("\n", "")
 			line = line.replace("\r", "")
-			data = np.empty((len(line) + 1,), dtype=np.int32)
+			data = np.empty((len(line) + 2,), dtype=np.int32)
+			data[0] = bos_id
 			for i in xrange(len(line)):
 				word = line[i]
 				if word not in vocab:
 					vocab[word] = len(vocab)
 					inv_vocab[vocab[word]] = word
-				data[i] = vocab[word]
-			data[len(line)] = 0
+				data[i + 1] = vocab[word]
+			data[len(line) + 1] = eos_id
 			dataset.append(data)
 	n_vocab = len(vocab)
 	n_dataset = len(dataset)

@@ -32,7 +32,7 @@ conf.word_decoder_fc_nonlinear = "elu"
 conf.word_decoder_merge_type = "concat"
 
 # Trainer
-conf.learning_rate = 0.0025
+conf.learning_rate = 0.0003
 conf.gradient_momentum = 0.95
 
 model = Model(conf, name="m1")
