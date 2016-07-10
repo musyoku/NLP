@@ -86,9 +86,4 @@ sentence = sample_data()
 segmentation = lattice.segment(sentence)
 print segmentation
 
-lattice = BigramLattice(model, vocab)
-sentence = sample_data()
-segmentation = lattice.segment(sentence)
-print segmentation
-
 # train_batch()

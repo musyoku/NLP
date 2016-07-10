@@ -1,3 +1,4 @@
+import math
 import numpy as np
 
 class Lattice:
@@ -21,7 +22,8 @@ class BigramLattice(Lattice):
 				self.reserved_words.append(word)
 				self.reserved_contexts.append(context)
 			else:
-				alpha[t, k] = self.model.Pw_h(word, context)
+				alpha[t, k] = self.pre_computed_pw_h[self.index]
+				self.index += 1
 			return
 
 		_sum = 0
@@ -32,7 +34,8 @@ class BigramLattice(Lattice):
 				self.reserved_contexts.append(context)
 				pw_h = 0
 			else:
-				pw_h = self.model.Pw_h(word, context)
+				pw_h =  self.pre_computed_pw_h[self.index]
+				self.index += 1
 			_sum += pw_h * alpha[t - k, j]
 		alpha[t, k] = _sum
 
@@ -110,11 +113,30 @@ class BigramLattice(Lattice):
 			char_ids = self.reserved_contexts[i]
 			context_char_ids_batch[i, :len(char_ids)] = char_ids
 
-		print len(self.reserved_words)
-		print len(self.reserved_contexts)
+		n_rows_per_split = 500
+		division = int(math.ceil(len(self.reserved_words) / float(n_rows_per_split)))
 
-		pw_h_batch = self.model.Pw_h_batch(word_char_ids_batch, context_char_ids_batch)
-		print pw_h_batch
+		word_char_ids_batch_array = []
+		context_char_ids_batch_array = []
+
+		if division == 0:
+			word_char_ids_batch_array.append(word_char_ids_batch)
+			context_char_ids_batch_array.append(context_char_ids_batch)
+		else:
+			for i in xrange(division - 1):
+				word_char_ids_batch_array.append(word_char_ids_batch[i * n_rows_per_split:(i + 1) * n_rows_per_split])
+				context_char_ids_batch_array.append(context_char_ids_batch[i * n_rows_per_split:(i + 1) * n_rows_per_split])
+			i = division - 1
+			word_char_ids_batch_array.append(word_char_ids_batch[i * n_rows_per_split:])
+			context_char_ids_batch_array.append(context_char_ids_batch[i * n_rows_per_split:])
+
+		for i in xrange(division):
+			pw_h_batch = self.model.Pw_h_batch(word_char_ids_batch_array[i], context_char_ids_batch_array[i])
+			if self.pre_computed_pw_h is None:
+				self.pre_computed_pw_h = pw_h_batch
+			else:
+				self.pre_computed_pw_h = np.r_[self.pre_computed_pw_h, pw_h_batch]
+		self.index = 0
 
 		self.pre_computation = False
 		segmentation.append(1)
