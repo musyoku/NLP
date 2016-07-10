@@ -638,7 +638,7 @@ class Model:
 		kld = F.sum(mean * mean + var - ln_var - 1, axis=1) * 0.5
 		return kld
 
-	def train_word_ngram_batch(self, word_vec_batch, next_word_vec_batch):
+	def train_word_ngram(self, word_vec_batch, next_word_vec_batch):
 		output = self.word_ngram_lstm(word_vec_batch, test=False)
 		mean, ln_var = self.word_ngram_fc(output, apply_f=False)
 		nll = self.gaussian_nll_keepbatch(next_word_vec_batch, mean, ln_var)
@@ -648,6 +648,25 @@ class Model:
 		self.zero_grads_word_ngram()
 		loss.backward()
 		self.update_word_ngram()
+
+	def train_word_ngram_sequence(self, word_vec_seq, next_word_vec_seq):
+		sum_loss = 0
+		self.word_ngram_lstm.reset_state()
+		for i in xrange(len(word_vec_seq)):
+			word_vec = self.encode_word(word_vec_seq[i], test=True)
+			target_vec = self.encode_word(next_word_vec_seq[i], test=True)
+			output = self.word_ngram_lstm(word_vec, test=False)
+			mean, ln_var = self.word_ngram_fc(output, apply_f=False)
+			nll = self.gaussian_nll_keepbatch(target_vec, mean, ln_var)
+			kld = self.gaussian_kl_divergence_keepbatch(mean, ln_var)
+			loss = F.sum(nll + kld)
+			sum_loss += loss
+
+		self.zero_grads_word_ngram()
+		sum_loss.backward()
+		self.update_word_ngram()
+
+		return float(sum_loss.data)
 
 	def Pw_h(self, word_char_ids, context_char_ids):
 		word_vec = self.encode_word(word_char_ids, test=True)
@@ -676,11 +695,11 @@ class Model:
 		self.word_encoder_lstm.reset_state()
 		self.word_decoder_lstm.reset_state()
 
-	def zero_grads_word_ngram():
+	def zero_grads_word_ngram(self):
 		self.optimizer_word_ngram_lstm.zero_grads()
 		self.optimizer_word_ngram_fc.zero_grads()
 
-	def update_word_ngram():
+	def update_word_ngram(self):
 		self.optimizer_word_ngram_lstm.update()
 		self.optimizer_word_ngram_fc.update()
 

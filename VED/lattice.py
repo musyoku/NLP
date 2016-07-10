@@ -37,6 +37,8 @@ class BigramLattice(Lattice):
 				pw_h =  self.pre_computed_pw_h[self.index]
 				self.index += 1
 			_sum += pw_h * alpha[t - k, j]
+		if self.pre_computation:
+			return
 		alpha[t, k] = _sum
 
 	def forward_filtering(self, sentence_ids, alpha):
@@ -60,7 +62,8 @@ class BigramLattice(Lattice):
 		t = len(sentence_ids) - 2
 		for k in xrange(1, len(sentence_ids) - 1):
 			context = sentence_ids[- k - 1:- 1]
-			p = self.model.Pw_h(eos, context) * alpha[t, k]
+			p = self.pre_computed_pw_h[self.index] * alpha[t, k]
+			self.index += 1
 			sum_p += p
 			p_k.append(p)
 
@@ -93,16 +96,25 @@ class BigramLattice(Lattice):
 		return len(p_k)
 
 	def segment(self, sentence_ids):
-		print sentence_ids
 		alpha = np.zeros((len(sentence_ids) + 1, len(sentence_ids) + 1), dtype=np.float64)
 		alpha[0, 1] = 0
 		segmentation = []
 
+		self.pre_computed_pw_h = None
 		self.pre_computation = True
+		self.reserved_words = []
+		self.reserved_contexts = []
 		self.forward_filtering(sentence_ids, alpha)
 
+		eos = np.asarray([self.vocab.eos_id], dtype=np.int32)
+		t = len(sentence_ids) - 2
+		for k in xrange(1, len(sentence_ids) - 1):
+			context = sentence_ids[- k - 1:- 1]
+			self.reserved_words.append(eos)
+			self.reserved_contexts.append(context)
+
 		max_word_length = len(sentence_ids) - 2
-		max_context_length = max_word_length - 1
+		max_context_length = max_word_length
 		word_char_ids_batch = np.full((len(self.reserved_words), max_word_length), -1, dtype=np.float32)
 		for i in xrange(len(self.reserved_words)):
 			char_ids = self.reserved_words[i]
