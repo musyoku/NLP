@@ -31,11 +31,13 @@ class Conf:
 		self.word_encoder_fc_hidden_units = []
 		self.word_encoder_fc_apply_batchnorm = False
 		self.word_encoder_fc_apply_dropout = False
-		self.word_encoder_fc_nonlinear = "elu"
+		self.word_encoder_fc_nonlinear = "softplus"
 
 		self.word_decoder_lstm_units = [500]
 		self.word_decoder_lstm_apply_batchnorm = False
 		self.word_decoder_merge_type = "concat"
+
+		self.word_ngram_lstm_units = [500]
 
 		self.discriminator_hidden_units = [500]
 		self.discriminator_apply_batchnorm = False
@@ -70,6 +72,29 @@ class LSTM(L.LSTM):
 				self.c = F.where(condition, c, self.c)
 		return self.h
 
+class GRU(L.StatefulGRU):
+
+	def __call__(self, x, condition=None):
+		z = self.W_z(x)
+		h_bar = self.W(x)
+		if self.h is not None:
+			r = F.sigmoid(self.W_r(x) + self.U_r(self.h))
+			z += self.U_z(self.h)
+			h_bar += self.U(r * self.h)
+		z = F.sigmoid(z)
+		h_bar = F.tanh(h_bar)
+
+		h_new = z * h_bar
+		if self.h is not None:
+			h_new += (1 - z) * self.h
+		if condition is None:
+			self.h = h_new
+		else:
+			if self.h is None:
+				self.h = h_new
+			else:
+				self.h = F.where(condition, h_new, self.h)
+		return self.h
 
 class LSTMEncoder(chainer.Chain):
 	def __init__(self, **layers):
@@ -114,6 +139,9 @@ class LSTMDecoder(LSTMEncoder):
 
 		return chain[-1]
 
+	def __call__(self, x, test=False):
+		return self.forward_one_step(x, test=test)
+
 class MultiLayerPerceptron(chainer.Chain):
 	def __init__(self, **layers):
 		super(MultiLayerPerceptron, self).__init__(**layers)
@@ -146,9 +174,9 @@ class GaussianNetwork(chainer.Chain):
 	def __init__(self, **layers):
 		super(GaussianNetwork, self).__init__(**layers)
 		self.activation_function = "softplus"
-		self.apply_batchnorm_to_input = True
-		self.apply_batchnorm = True
-		self.apply_dropout = True
+		self.apply_batchnorm_to_input = False
+		self.apply_batchnorm = False
+		self.apply_dropout = False
 		self.batchnorm_before_activation = True
 
 	@property
@@ -365,15 +393,12 @@ class Model:
 			if self.gpu_enabled:
 				condition.to_gpu()
 			c0 = Variable(xp.asanyarray(char_ids_batch[i], dtype=xp.int32))
-			print "## STEP ##"
-			print c0.data
 			c0 = self.embed_id(c0)
 			output = self.word_encoder_lstm(c0, condition, test=test)
-			print output.data
 		output = self.word_encoder_fc(output, apply_f=True)
 		return output
 
-	def decode_word(self, word_vec, test=False):
+	def decode_word(self, word_vec, test=False, argmax=True):
 		if word_vec.ndim != 1:
 			raise Exception()
 		xp = self.xp
@@ -386,12 +411,40 @@ class Model:
 				prev_y = Variable(xp.zeros((1, self.char_embed_size), dtype=xp.float32))
 			dec_in = F.concat((word_vec, prev_y))
 			y = self.word_decoder_lstm(dec_in, test=test)
-			ids = xp.argmax(y.data, axis=1)
+			if argmax:
+				ids = xp.argmax(y.data, axis=1)
+			else:
+				y = F.softmax(y)
+				y.to_cpu()
+				ids = [np.random.choice(np.arange(y.data.shape[1]), p=y.data[0])]
+			char_ids.append(int(ids[0]))
 			if ids[0] == 0:
 				return char_ids
-			char_ids.append(int(ids[0]))
 			ids = Variable(xp.asanyarray(ids, dtype=xp.int32))
 			prev_y = self.embed_id(ids)
+		return char_ids
+
+
+	def decode_word_batch(self, word_vec_batch, test=False):
+		xp = self.xp
+		self.word_decoder_lstm.reset_state()
+		if isinstance(word_vec_batch, Variable) == False:
+			word_vec_batch = Variable(word_vec_batch)
+		batchsize = word_vec_batch.data.shape[0]
+		prev_y = None
+		length_limit = 100
+		char_ids = xp.full((batchsize, length_limit), -1, dtype=xp.int32)
+		for i in xrange(length_limit):
+			if prev_y is None:
+				prev_y = Variable(xp.zeros((batchsize, self.char_embed_size), dtype=xp.float32))
+			dec_in = F.concat((word_vec_batch, prev_y))
+			y = self.word_decoder_lstm(dec_in, test=test)
+			ids = xp.argmax(y.data, axis=1)
+			char_ids[:,i] = ids
+			ids = Variable(ids)
+			prev_y = self.embed_id(ids)
+		if self.gpu_enabled:
+			char_ids = cuda.to_cpu(char_ids)
 		return char_ids
 
 	def sample_z(self, batchsize, z_dim):
@@ -404,6 +457,8 @@ class Model:
 	def train_word_embedding(self, char_ids):
 		xp = self.xp
 		word_vec = self.encode_word(char_ids)
+		target_ids = char_ids[::-1]
+		target_ids = np.roll(target_ids, -1, axis=0)
 
 		# reconstruction loss
 		loss_reconstruction = 0
@@ -414,7 +469,7 @@ class Model:
 				prev_y = Variable(xp.zeros((1, self.char_embed_size), dtype=xp.float32))
 			dec_in = F.concat((word_vec, prev_y))
 			y = self.word_decoder_lstm(dec_in, test=False)
-			target = Variable(xp.asanyarray([char_ids[i]], dtype=xp.int32))
+			target = Variable(xp.asanyarray([target_ids[i]], dtype=xp.int32))
 			loss = F.softmax_cross_entropy(y, target)
 			prev_y = self.embed_id(target)
 			loss_reconstruction += loss
@@ -422,6 +477,7 @@ class Model:
 		self.zero_grads_generator()
 		loss_reconstruction.backward()
 		self.update_generator()
+
 
 		# adversarial loss
 		## 0: from encoder
@@ -441,6 +497,59 @@ class Model:
 		y_real = self.discriminator(real_z, test=False)
 		loss_discriminator = F.softmax_cross_entropy(y_fake, Variable(xp.zeros(1, dtype=xp.int32)))
 		loss_discriminator += F.softmax_cross_entropy(y_real, Variable(xp.ones(1, dtype=xp.int32)))
+
+		self.optimizer_discriminator.zero_grads()
+		loss_discriminator.backward()
+		self.optimizer_discriminator.update()
+
+		return float(loss_reconstruction.data), float(loss_generator.data), float(loss_discriminator.data)
+
+	def train_word_embedding_batch(self, char_ids_batch):
+		xp = self.xp
+		word_vec = self.encode_word_batch(char_ids_batch)
+		batchsize = char_ids_batch.shape[0]
+		char_ids_batch = char_ids_batch.T
+
+		# reconstruction loss
+		loss_reconstruction = 0
+		self.word_decoder_lstm.reset_state()
+		prev_y = None
+		for i in xrange(char_ids_batch.shape[0]):
+			if prev_y is None:
+				prev_y = Variable(xp.zeros((batchsize, self.char_embed_size), dtype=xp.float32))
+			dec_in = F.concat((word_vec, prev_y))
+			y = self.word_decoder_lstm(dec_in, test=False)
+			target = Variable(char_ids_batch[i])
+			if self.gpu_enabled:
+				target.to_gpu()
+			loss = F.softmax_cross_entropy(y, target)
+			prev_y = self.embed_id(target)
+			loss_reconstruction += loss
+
+		self.zero_grads_generator()
+		loss_reconstruction.backward()
+		self.update_generator()
+
+
+
+		# adversarial loss
+		## 0: from encoder
+		## 1: from noise
+		real_z = self.sample_z(batchsize, self.word_embed_size)
+		fake_z = word_vec
+		y_fake = self.discriminator(fake_z, test=False)
+
+		## train generator
+		loss_generator = F.softmax_cross_entropy(y_fake, Variable(xp.ones((batchsize,), dtype=xp.int32)))
+
+		self.zero_grads_generator()
+		loss_generator.backward()
+		self.update_generator()
+
+		# train discriminator
+		y_real = self.discriminator(real_z, test=False)
+		loss_discriminator = F.softmax_cross_entropy(y_fake, Variable(xp.zeros((batchsize,), dtype=xp.int32)))
+		loss_discriminator += F.softmax_cross_entropy(y_real, Variable(xp.ones((batchsize,), dtype=xp.int32)))
 
 		self.optimizer_discriminator.zero_grads()
 		loss_discriminator.backward()

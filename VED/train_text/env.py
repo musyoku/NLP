@@ -11,13 +11,13 @@ conf.gpu_enabled = False if args.gpu_enabled == -1 else True
 conf.n_vocab = n_vocab
 
 # Embed
-conf.char_embed_size = 20
-conf.word_embed_size = 100
+conf.char_embed_size = 50
+conf.word_embed_size = 200
 
 # Encoder
-conf.word_encoder_lstm_units = [3]
+conf.word_encoder_lstm_units = [500]
 conf.word_encoder_lstm_apply_batchnorm = False
-conf.word_encoder_fc_hidden_units = [500, 500]
+conf.word_encoder_fc_hidden_units = []
 conf.word_encoder_fc_apply_batchnorm = True
 conf.word_encoder_fc_apply_dropout = False
 conf.word_encoder_fc_nonlinear = "elu"
@@ -28,13 +28,13 @@ conf.word_decoder_lstm_apply_batchnorm = False
 conf.word_decoder_merge_type = "concat"
 
 # Discriminator
-conf.discriminator_hidden_units = [500, 500]
+conf.discriminator_hidden_units = [200, 200]
 conf.discriminator_apply_batchnorm = True
 conf.discriminator_apply_dropout = False
 conf.discriminator_nonlinear = "elu"
 
 # Trainer
-conf.learning_rate = 0.0003
+conf.learning_rate = 0.001
 conf.gradient_momentum = 0.95
 
 model = Model(conf, name="m1")
