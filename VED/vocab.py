@@ -8,7 +8,7 @@ inv_vocab = {}
 
 eos_id = 0
 bos_id = 1
-	
+
 def load(dir):
 	fs = os.listdir(dir)
 	print "loading", len(fs), "files..."
@@ -40,6 +40,12 @@ def load(dir):
 
 def id_to_word(id):
 	return inv_vocab[id]
+
+def ids_to_str(ids):
+	str = ""
+	for i in xrange(len(ids)):
+		str += id_to_word(ids[i])
+	return str
 
 def word_to_id(word):
 	return vocab[word]

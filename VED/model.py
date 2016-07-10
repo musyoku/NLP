@@ -21,7 +21,7 @@ activations = {
 
 class Conf:
 	def __init__(self):
-		self.use_gpu = True
+		self.gpu_enabled = True
 		self.n_vocab = -1
 		self.char_embed_size = 20
 		self.word_embed_size = 200
@@ -35,23 +35,65 @@ class Conf:
 
 		self.word_decoder_lstm_units = [500]
 		self.word_decoder_lstm_apply_batchnorm = False
-		self.word_decoder_fc_hidden_units = []
-		self.word_decoder_fc_apply_batchnorm = False
-		self.word_decoder_fc_apply_dropout = False
-		self.word_decoder_fc_nonlinear = "elu"
 		self.word_decoder_merge_type = "concat"
 
-		self.learning_rate = 0.0025
+		self.discriminator_hidden_units = [500]
+		self.discriminator_apply_batchnorm = False
+		self.discriminator_apply_dropout = False
+		self.discriminator_nonlinear = "elu"
+
+		self.learning_rate = 0.0003
 		self.gradient_momentum = 0.95
 
 	def check(self):
 		if len(self.word_encoder_lstm_units) < 1:
 			raise Exception("You need to add one or more hidden layers to LSTM network.")
 
-class LSTMNetwork(chainer.Chain):
+class LSTM(L.LSTM):
+
+	def __call__(self, x, condition=None):
+		lstm_in = self.upward(x)
+		if self.h is not None:
+			lstm_in += self.lateral(self.h)
+		if self.c is None:
+			xp = self.xp
+			self.c = Variable(xp.zeros((len(x.data), self.state_size), dtype=x.data.dtype),	volatile="auto")
+		if condition is None:
+			self.c, self.h = F.lstm(self.c, lstm_in)
+		else:
+			c, h = F.lstm(self.c, lstm_in)
+			if self.h is None:
+				self.h = h
+				self.c = c
+			else:
+				self.h = F.where(condition, h, self.h)
+				self.c = F.where(condition, c, self.c)
+		return self.h
+
+
+class LSTMEncoder(chainer.Chain):
 	def __init__(self, **layers):
-		super(LSTMNetwork, self).__init__(**layers)
+		super(LSTMEncoder, self).__init__(**layers)
 		self.n_layers = 0
+
+	def forward_one_step(self, x, condition, test):
+		chain = [x]
+
+		# Hidden layers
+		for i in range(self.n_layers):
+			output = getattr(self, "layer_%i" % i)(chain[-1], condition)
+			chain.append(output)
+
+		return chain[-1]
+
+	def reset_state(self):
+		for i in range(self.n_layers):
+			getattr(self, "layer_%i" % i).reset_state()
+
+	def __call__(self, x, condition=None, test=False):
+		return self.forward_one_step(x, condition, test=test)
+
+class LSTMDecoder(LSTMEncoder):
 
 	def forward_one_step(self, x, test):
 		chain = [x]
@@ -61,18 +103,16 @@ class LSTMNetwork(chainer.Chain):
 			output = getattr(self, "layer_%i" % i)(chain[-1])
 			chain.append(output)
 
-		if hasattr(self, "layer_output"):
-			output = getattr(self, "layer_output")(chain[-1])
-			chain.append(output)
+		output = getattr(self, "layer_output")(chain[-1])
+		chain.append(output)
+
+		# bias = cuda.cupy.zeros(output.data.shape, dtype=np.float32)
+		# bias[:, 0] = 1.0
+		# bias = Variable(bias)
+		# output = chain[-1] + bias
+		# chain.append(output)
 
 		return chain[-1]
-
-	def reset_state(self):
-		for i in range(self.n_layers):
-			getattr(self, "layer_%i" % i).reset_state()
-
-	def __call__(self, x, test=False):
-		return self.forward_one_step(x, test=test)
 
 class MultiLayerPerceptron(chainer.Chain):
 	def __init__(self, **layers):
@@ -184,8 +224,9 @@ class Model:
 		self.name = name
 		self.char_embed_size = conf.char_embed_size
 		self.word_embed_size = conf.word_embed_size
+		self.conf = conf
 
-		self.embed_id, self.word_encoder_lstm, self.word_encoder_fc, self.word_decoder_lstm = self.build(conf)
+		self.embed_id, self.word_encoder_lstm, self.word_encoder_fc, self.word_decoder_lstm, self.discriminator = self.build(conf)
 
 		self.optimizer_word_encoder_lstm = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_word_encoder_lstm.setup(self.word_encoder_lstm)
@@ -199,6 +240,10 @@ class Model:
 		self.optimizer_word_encoder_fc.setup(self.word_encoder_fc)
 		self.optimizer_word_encoder_fc.add_hook(GradientClipping(10.0))
 
+		self.optimizer_discriminator = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
+		self.optimizer_discriminator.setup(self.discriminator)
+		self.optimizer_discriminator.add_hook(GradientClipping(10.0))
+
 		self.optimizer_embed_id = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_embed_id.setup(self.embed_id)
 		self.optimizer_embed_id.add_hook(GradientClipping(10.0))
@@ -208,7 +253,7 @@ class Model:
 		wscale = 0.1
 
 		embed_id = EmbedID(conf.n_vocab, conf.char_embed_size, ignore_label=-1)
-		if conf.use_gpu:
+		if conf.gpu_enabled:
 			embed_id.to_gpu()
 
 		# Encoder
@@ -220,11 +265,11 @@ class Model:
 			if conf.word_encoder_lstm_apply_batchnorm:
 				lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
 			else:
-				lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+				lstm_attributes["layer_%i" % i] = LSTM(n_in, n_out)
 
-		word_encoder_lstm = LSTMNetwork(**lstm_attributes)
+		word_encoder_lstm = LSTMEncoder(**lstm_attributes)
 		word_encoder_lstm.n_layers = len(lstm_units)
-		if conf.use_gpu:
+		if conf.gpu_enabled:
 			word_encoder_lstm.to_gpu()
 
 		# Decoder
@@ -236,12 +281,12 @@ class Model:
 			if conf.word_encoder_lstm_apply_batchnorm:
 				lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
 			else:
-				lstm_attributes["layer_%i" % i] = L.LSTM(n_in, n_out)
+				lstm_attributes["layer_%i" % i] = LSTM(n_in, n_out)
 		lstm_attributes["layer_output"] = L.Linear(conf.word_decoder_lstm_units[-1], conf.n_vocab, wscale=wscale)
 
-		word_decoder_lstm = LSTMNetwork(**lstm_attributes)
+		word_decoder_lstm = LSTMDecoder(**lstm_attributes)
 		word_decoder_lstm.n_layers = len(lstm_units)
-		if conf.use_gpu:
+		if conf.gpu_enabled:
 			word_decoder_lstm.to_gpu()
 
 		# Variational encoder
@@ -264,17 +309,34 @@ class Model:
 		word_encoder_fc.nonlinear = conf.word_encoder_fc_nonlinear
 		word_encoder_fc.apply_batchnorm = conf.word_encoder_fc_apply_batchnorm
 		word_encoder_fc.apply_dropout = conf.word_encoder_fc_apply_dropout
-		if conf.use_gpu:
+		if conf.gpu_enabled:
 			word_encoder_fc.to_gpu()
 
-		return embed_id, word_encoder_lstm, word_encoder_fc, word_decoder_lstm
+		# Discriminator
+		fc_attributes = {}
+		fc_units = [(conf.word_embed_size, conf.discriminator_hidden_units[0])]
+		fc_units += zip(conf.discriminator_hidden_units[:-1], conf.discriminator_hidden_units[1:])
+		fc_units += [(conf.discriminator_hidden_units[-1], 2)]
+		for i, (n_in, n_out) in enumerate(fc_units):
+			fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+			fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
+
+		discriminator = MultiLayerPerceptron(**fc_attributes)
+		discriminator.n_layers = len(fc_units)
+		discriminator.nonlinear = conf.word_encoder_fc_nonlinear
+		discriminator.apply_batchnorm = conf.word_encoder_fc_apply_batchnorm
+		discriminator.apply_dropout = conf.word_encoder_fc_apply_dropout
+		if conf.gpu_enabled:
+			discriminator.to_gpu()
+
+		return embed_id, word_encoder_lstm, word_encoder_fc, word_decoder_lstm, discriminator
 
 	@property
 	def xp(self):
 		return np if self.word_encoder_lstm.layer_0._cpu else cuda.cupy
 
 	@property
-	def gpu(self):
+	def gpu_enabled(self):
 		return True if self.xp is cuda.cupy else False
 
 	def encode_word(self, char_ids, test=False):
@@ -285,6 +347,29 @@ class Model:
 			c0 = Variable(xp.asanyarray([char_ids[i]], dtype=xp.int32))
 			c0 = self.embed_id(c0)
 			output = self.word_encoder_lstm(c0, test=test)
+		output = self.word_encoder_fc(output, apply_f=True)
+		return output
+
+	def encode_word_batch(self, char_ids_batch, test=False):
+		xp = self.xp
+		self.word_encoder_lstm.reset_state()
+		output = None
+		char_ids_batch = char_ids_batch.T
+		batchsize = char_ids_batch.shape[1]
+		for i in xrange(char_ids_batch.shape[0]):
+			condition_args = np.argwhere(char_ids_batch[i] == -1).reshape(-1)
+			condition = np.full((batchsize, self.conf.word_encoder_lstm_units[0]), True, dtype=np.bool)
+			for j in xrange(condition_args.shape[0]):
+				condition[condition_args[j], :] = False
+			condition = Variable(condition)
+			if self.gpu_enabled:
+				condition.to_gpu()
+			c0 = Variable(xp.asanyarray(char_ids_batch[i], dtype=xp.int32))
+			print "## STEP ##"
+			print c0.data
+			c0 = self.embed_id(c0)
+			output = self.word_encoder_lstm(c0, condition, test=test)
+			print output.data
 		output = self.word_encoder_fc(output, apply_f=True)
 		return output
 
@@ -302,26 +387,93 @@ class Model:
 			dec_in = F.concat((word_vec, prev_y))
 			y = self.word_decoder_lstm(dec_in, test=test)
 			ids = xp.argmax(y.data, axis=1)
+			if ids[0] == 0:
+				return char_ids
 			char_ids.append(int(ids[0]))
 			ids = Variable(xp.asanyarray(ids, dtype=xp.int32))
 			prev_y = self.embed_id(ids)
 		return char_ids
 
+	def sample_z(self, batchsize, z_dim):
+		z = np.random.normal(0, 1, (batchsize, z_dim)).astype(np.float32)
+		z = Variable(z)
+		if self.gpu_enabled:
+			z.to_gpu()
+		return z
+
+	def train_word_embedding(self, char_ids):
+		xp = self.xp
+		word_vec = self.encode_word(char_ids)
+
+		# reconstruction loss
+		loss_reconstruction = 0
+		self.word_decoder_lstm.reset_state()
+		prev_y = None
+		for i in xrange(len(char_ids)):
+			if prev_y is None:
+				prev_y = Variable(xp.zeros((1, self.char_embed_size), dtype=xp.float32))
+			dec_in = F.concat((word_vec, prev_y))
+			y = self.word_decoder_lstm(dec_in, test=False)
+			target = Variable(xp.asanyarray([char_ids[i]], dtype=xp.int32))
+			loss = F.softmax_cross_entropy(y, target)
+			prev_y = self.embed_id(target)
+			loss_reconstruction += loss
+
+		self.zero_grads_generator()
+		loss_reconstruction.backward()
+		self.update_generator()
+
+		# adversarial loss
+		## 0: from encoder
+		## 1: from noise
+		real_z = self.sample_z(1, self.word_embed_size)
+		fake_z = word_vec
+		y_fake = self.discriminator(fake_z, test=False)
+
+		## train generator
+		loss_generator = F.softmax_cross_entropy(y_fake, Variable(xp.ones(1, dtype=xp.int32)))
+
+		self.zero_grads_generator()
+		loss_generator.backward()
+		self.update_generator()
+
+		# train discriminator
+		y_real = self.discriminator(real_z, test=False)
+		loss_discriminator = F.softmax_cross_entropy(y_fake, Variable(xp.zeros(1, dtype=xp.int32)))
+		loss_discriminator += F.softmax_cross_entropy(y_real, Variable(xp.ones(1, dtype=xp.int32)))
+
+		self.optimizer_discriminator.zero_grads()
+		loss_discriminator.backward()
+		self.optimizer_discriminator.update()
+
+		return float(loss_reconstruction.data), float(loss_generator.data), float(loss_discriminator.data)
+
 	def reset_state(self):
 		self.word_encoder_lstm.reset_state()
 		self.word_decoder_lstm.reset_state()
 
-	def zero_grads(self):
+	def zero_grads_word_reconstruction():
+		self.optimizer_word_decoder_lstm
+
+	def zero_grads_generator(self):
 		self.optimizer_word_encoder_lstm.zero_grads()
 		self.optimizer_word_encoder_fc.zero_grads()
 		self.optimizer_word_decoder_lstm.zero_grads()
 		self.optimizer_embed_id.zero_grads()
 
-	def update(self):
+	def update_generator(self):
 		self.optimizer_word_encoder_lstm.update()
 		self.optimizer_word_encoder_fc.update()
 		self.optimizer_word_decoder_lstm.update()
 		self.optimizer_embed_id.update()
+
+	def zero_grads(self):
+		self.zero_grads_generator()
+		self.optimizer_discriminator.zero_grads()
+
+	def update(self):
+		self.update_generator()
+		self.optimizer_discriminator.update()
 
 	def should_save(self, prop):
 		if isinstance(prop, chainer.Chain) or isinstance(prop, chainer.optimizer.GradientMethod) or isinstance(prop, EmbedID):
