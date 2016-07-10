@@ -18,7 +18,7 @@ conf.word_embed_size = 200
 conf.word_encoder_lstm_units = [500]
 conf.word_encoder_lstm_apply_batchnorm = False
 conf.word_encoder_fc_hidden_units = []
-conf.word_encoder_fc_apply_batchnorm = True
+conf.word_encoder_fc_apply_batchnorm = False
 conf.word_encoder_fc_apply_dropout = False
 conf.word_encoder_fc_nonlinear = "elu"
 
@@ -29,7 +29,7 @@ conf.word_decoder_merge_type = "concat"
 
 # Discriminator
 conf.discriminator_hidden_units = [200, 200]
-conf.discriminator_apply_batchnorm = True
+conf.discriminator_apply_batchnorm = False
 conf.discriminator_apply_dropout = False
 conf.discriminator_nonlinear = "elu"
 

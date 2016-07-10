@@ -16,6 +16,23 @@ total_time = 0
 
 current_length_limit = 30
 
+def sample_initial_word():
+	batch_array = []
+	max_length_in_batch = 0
+	for b in xrange(batchsize):
+		length = current_length_limit + 1
+		while length > current_length_limit:
+			k = np.random.randint(0, n_dataset)
+			data = dataset[k]
+			length = len(data)
+		batch_array.append(data)
+		if length > max_length_in_batch:
+			max_length_in_batch = length
+	batch = np.full((batchsize, max_length_in_batch - 1), -1, dtype=np.int32)
+	for i, data in enumerate(batch_array):
+		batch[i,:len(data)-1] = data[1:]
+	return batch
+
 def sample_batch():
 	batch_array = []
 	max_length_in_batch = 0
@@ -62,14 +79,19 @@ def train_single():
 			print ""
 
 def train_batch():
+	n_epoch = 10
+	n_train = 100
 	for epoch in xrange(n_epoch):
 		start_time = time.time()
 		sum_loss = 0
 		for t in xrange(n_train):
 			
-			sentence_batch = sample_batch()
+			sentence_batch = sample_initial_word()
 			loss_reconstruction, loss_generator, loss_discriminator = model.train_word_embedding_batch(sentence_batch)
 			print loss_reconstruction, loss_generator, loss_discriminator
+
+			sentence_batch = np.asanyarray([[0], [1]], dtype=np.int32)
+			loss_reconstruction, loss_generator, loss_discriminator = model.train_word_embedding_batch(sentence_batch)
 
 		model.save(args.model_dir)
 
@@ -81,6 +103,21 @@ def train_batch():
 			print "predict:", vocab.ids_to_str(char_ids)
 			print ""
 
+def train_initial_ngram():
+	n_epoch = 10
+	n_train = 100
+	batchsize
+	for epoch in xrange(n_epoch):
+		for t in xrange(n_train):
+			sentence_batch = sample_initial_word()
+			words = []
+			words.append(np.full((batchsize, 1), 1, dtype=np.int32))
+			words.append(sentence_batch)
+			words.append(np.full((batchsize, 1), 0, dtype=np.int32))
+			loss = model.train_word_ngram_sequence_batch(words[:-1], words[1:])
+			print loss
+		model.save(args.model_dir)
+
 def train_word_ngram():
 	lattice = BigramLattice(model, vocab)
 
@@ -88,7 +125,7 @@ def train_word_ngram():
 	# indices = [1323, 3194, 2801, 3132, 2883, 3930, 1280, 1922, 143, 528, 1599, 2974, 613, 3558, 1218, 3462]
 	for epoch in xrange(n_epoch):
 		start_time = time.time()
-		for step in xrange(n_train):
+		for t in xrange(n_train):
 			sentence, k = sample_data()
 			print "data", k
 			print vocab.ids_to_str(sentence)
@@ -98,10 +135,14 @@ def train_word_ngram():
 			start = 0
 			for s in xrange(len(segmentation)):
 				word = sentence[start:start + segmentation[s]]
+				print vocab.ids_to_str(word), " / ",
+				if word[0] == 0 or word[0] == 1:
+					pass
+				else:
+					word = np.r_[word, np.asarray([0], dtype=np.int32)]
+				words.append(word)
 				if len(word) > max_length:
 					max_length = len(word)
-				print vocab.ids_to_str(word), " / ",
-				words.append(word)
 				start += segmentation[s]
 			print
 
@@ -110,9 +151,8 @@ def train_word_ngram():
 				word = words[i]
 				char_ids_batch[i, :len(word)] = word
 
-
 			# word embedding
-			n_steps = 100
+			n_steps = 50
 			sum_loss_r = 0
 			sum_loss_g = 0
 			sum_loss_d = 0
@@ -134,5 +174,7 @@ def train_word_ngram():
 		print "	time", elapsed_time
 		model.save(args.model_dir)
 
+# train_batch()
+# train_initial_ngram()
 train_word_ngram()
 # train_batch()

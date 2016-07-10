@@ -649,12 +649,35 @@ class Model:
 		loss.backward()
 		self.update_word_ngram()
 
-	def train_word_ngram_sequence(self, word_vec_seq, next_word_vec_seq):
+	def train_word_ngram_sequence(self, char_ids_seq, next_char_ids_seq):
 		sum_loss = 0
+		batchsize = char_ids_seq[0].shape[0]
 		self.word_ngram_lstm.reset_state()
-		for i in xrange(len(word_vec_seq)):
-			word_vec = self.encode_word(word_vec_seq[i], test=True)
-			target_vec = self.encode_word(next_word_vec_seq[i], test=True)
+
+		for i in xrange(len(char_ids_seq)):
+			word_vec = self.encode_word(char_ids_seq[i], test=True)
+			target_vec = self.encode_word(next_char_ids_seq[i], test=True)
+			output = self.word_ngram_lstm(word_vec, test=False)
+			mean, ln_var = self.word_ngram_fc(output, apply_f=False)
+			nll = self.gaussian_nll_keepbatch(target_vec, mean, ln_var)
+			kld = self.gaussian_kl_divergence_keepbatch(mean, ln_var)
+			loss = F.sum(nll + kld)
+			sum_loss += loss
+
+		self.zero_grads_word_ngram()
+		sum_loss.backward()
+		self.update_word_ngram()
+		return float(sum_loss.data) / batchsize
+
+
+	def train_word_ngram_sequence_batch(self, char_ids_seq, next_char_ids_seq):
+		sum_loss = 0
+		batchsize = char_ids_seq[0].shape[0]
+		self.word_ngram_lstm.reset_state()
+
+		for i in xrange(len(char_ids_seq)):
+			word_vec = self.encode_word_batch(char_ids_seq[i], test=True)
+			target_vec = self.encode_word_batch(next_char_ids_seq[i], test=True)
 			output = self.word_ngram_lstm(word_vec, test=False)
 			mean, ln_var = self.word_ngram_fc(output, apply_f=False)
 			nll = self.gaussian_nll_keepbatch(target_vec, mean, ln_var)
@@ -666,7 +689,7 @@ class Model:
 		sum_loss.backward()
 		self.update_word_ngram()
 
-		return float(sum_loss.data)
+		return float(sum_loss.data) / batchsize
 
 	def Pw_h(self, word_char_ids, context_char_ids):
 		word_vec = self.encode_word(word_char_ids, test=True)
