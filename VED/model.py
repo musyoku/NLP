@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-import os, time
+import os, time, math
 import numpy as np
 import chainer
 import collections, six
+import sgu
 from chainer import cuda, Variable, optimizers, serializers, function, link
 from chainer.utils import type_check
 from chainer import functions as F
@@ -31,13 +32,17 @@ class Conf:
 		self.word_encoder_fc_hidden_units = []
 		self.word_encoder_fc_apply_batchnorm = False
 		self.word_encoder_fc_apply_dropout = False
-		self.word_encoder_fc_nonlinear = "softplus"
+		self.word_encoder_fc_nonlinear = "elu"
 
 		self.word_decoder_lstm_units = [500]
 		self.word_decoder_lstm_apply_batchnorm = False
 		self.word_decoder_merge_type = "concat"
 
 		self.word_ngram_lstm_units = [500]
+		self.word_ngram_fc_hidden_units = []
+		self.word_ngram_fc_apply_batchnorm = False
+		self.word_ngram_fc_apply_dropout = False
+		self.word_ngram_fc_nonlinear = "elu"
 
 		self.discriminator_hidden_units = [500]
 		self.discriminator_apply_batchnorm = False
@@ -95,6 +100,25 @@ class GRU(L.StatefulGRU):
 			else:
 				self.h = F.where(condition, h_new, self.h)
 		return self.h
+
+class DSGU(sgu.StatefulDSGU):
+
+	def __call__(self, x, condition=None):
+
+		if self.h is None:
+			z_t = sgu.hard_sigmoid(self.W_xz(x))
+			h_t = z_t * 0.5
+		else:
+			h_t = sgu.DSGU.__call__(self, self.h, x)
+
+		if condition is None:
+			self.h = h_t
+		else:
+			if self.h is None:
+				self.h = h_t
+			else:
+				self.h = F.where(condition, h_t, self.h)
+		return h_t
 
 class LSTMEncoder(chainer.Chain):
 	def __init__(self, **layers):
@@ -254,7 +278,7 @@ class Model:
 		self.word_embed_size = conf.word_embed_size
 		self.conf = conf
 
-		self.embed_id, self.word_encoder_lstm, self.word_encoder_fc, self.word_decoder_lstm, self.discriminator = self.build(conf)
+		self.embed_id, self.word_encoder_lstm, self.word_encoder_fc, self.word_decoder_lstm, self.discriminator, self.word_ngram_lstm, self.word_ngram_fc = self.build(conf)
 
 		self.optimizer_word_encoder_lstm = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_word_encoder_lstm.setup(self.word_encoder_lstm)
@@ -272,6 +296,14 @@ class Model:
 		self.optimizer_discriminator.setup(self.discriminator)
 		self.optimizer_discriminator.add_hook(GradientClipping(10.0))
 
+		self.optimizer_word_ngram_lstm = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
+		self.optimizer_word_ngram_lstm.setup(self.word_ngram_lstm)
+		self.optimizer_word_ngram_lstm.add_hook(GradientClipping(10.0))
+
+		self.optimizer_word_ngram_fc = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
+		self.optimizer_word_ngram_fc.setup(self.word_ngram_fc)
+		self.optimizer_word_ngram_fc.add_hook(GradientClipping(10.0))
+
 		self.optimizer_embed_id = optimizers.Adam(alpha=conf.learning_rate, beta1=conf.gradient_momentum)
 		self.optimizer_embed_id.setup(self.embed_id)
 		self.optimizer_embed_id.add_hook(GradientClipping(10.0))
@@ -284,7 +316,7 @@ class Model:
 		if conf.gpu_enabled:
 			embed_id.to_gpu()
 
-		# Encoder
+		# encoder
 		lstm_attributes = {}
 		lstm_units = [(conf.char_embed_size, conf.word_encoder_lstm_units[0])]
 		lstm_units += zip(conf.word_encoder_lstm_units[:-1], conf.word_encoder_lstm_units[1:])
@@ -300,7 +332,7 @@ class Model:
 		if conf.gpu_enabled:
 			word_encoder_lstm.to_gpu()
 
-		# Decoder
+		# decoder
 		lstm_attributes = {}
 		lstm_units = [(conf.char_embed_size + conf.word_embed_size, conf.word_decoder_lstm_units[0])]
 		lstm_units += zip(conf.word_decoder_lstm_units[:-1], conf.word_decoder_lstm_units[1:])
@@ -317,7 +349,46 @@ class Model:
 		if conf.gpu_enabled:
 			word_decoder_lstm.to_gpu()
 
-		# Variational encoder
+		# word n-gram
+		lstm_attributes = {}
+		lstm_units = [(conf.word_embed_size, conf.word_ngram_lstm_units[0])]
+		lstm_units += zip(conf.word_ngram_lstm_units[:-1], conf.word_ngram_lstm_units[1:])
+
+		for i, (n_in, n_out) in enumerate(lstm_units):
+			if conf.word_encoder_lstm_apply_batchnorm:
+				lstm_attributes["layer_%i" % i] = BNLSTM(n_in, n_out)
+			else:
+				lstm_attributes["layer_%i" % i] = LSTM(n_in, n_out)
+
+		word_ngram_lstm = LSTMEncoder(**lstm_attributes)
+		word_ngram_lstm.n_layers = len(lstm_units)
+		if conf.gpu_enabled:
+			word_ngram_lstm.to_gpu()
+
+		# variational encoder for word n-gram
+		fc_attributes = {}
+		fc_units = []
+		if len(conf.word_ngram_fc_hidden_units) > 0:
+			fc_units = [(conf.word_ngram_lstm_units[-1], conf.word_ngram_fc_hidden_units[0])]
+			fc_units += zip(conf.word_ngram_fc_hidden_units[:-1], conf.word_ngram_fc_hidden_units[1:])
+			for i, (n_in, n_out) in enumerate(fc_units):
+				fc_attributes["layer_%i" % i] = L.Linear(n_in, n_out, wscale=wscale)
+				fc_attributes["batchnorm_%i" % i] = L.BatchNormalization(n_out)
+			fc_attributes["layer_mean"] = L.Linear(conf.word_ngram_fc_hidden_units[-1], conf.word_embed_size, wscale=wscale)
+			fc_attributes["layer_var"] = L.Linear(conf.word_ngram_fc_hidden_units[-1], conf.word_embed_size, wscale=wscale)
+		else:
+			fc_attributes["layer_mean"] = L.Linear(conf.word_ngram_lstm_units[-1], conf.word_embed_size, wscale=wscale)
+			fc_attributes["layer_var"] = L.Linear(conf.word_ngram_lstm_units[-1], conf.word_embed_size, wscale=wscale)
+
+		word_ngram_fc = GaussianNetwork(**fc_attributes)
+		word_ngram_fc.n_layers = len(fc_units)
+		word_ngram_fc.nonlinear = conf.word_ngram_fc_nonlinear
+		word_ngram_fc.apply_batchnorm = conf.word_ngram_fc_apply_batchnorm
+		word_ngram_fc.apply_dropout = conf.word_ngram_fc_apply_dropout
+		if conf.gpu_enabled:
+			word_ngram_fc.to_gpu()
+
+		# variational encoder
 		fc_attributes = {}
 		fc_units = []
 		if len(conf.word_encoder_fc_hidden_units) > 0:
@@ -340,7 +411,7 @@ class Model:
 		if conf.gpu_enabled:
 			word_encoder_fc.to_gpu()
 
-		# Discriminator
+		# discriminator
 		fc_attributes = {}
 		fc_units = [(conf.word_embed_size, conf.discriminator_hidden_units[0])]
 		fc_units += zip(conf.discriminator_hidden_units[:-1], conf.discriminator_hidden_units[1:])
@@ -357,7 +428,7 @@ class Model:
 		if conf.gpu_enabled:
 			discriminator.to_gpu()
 
-		return embed_id, word_encoder_lstm, word_encoder_fc, word_decoder_lstm, discriminator
+		return embed_id, word_encoder_lstm, word_encoder_fc, word_decoder_lstm, discriminator, word_ngram_lstm, word_ngram_fc
 
 	@property
 	def xp(self):
@@ -424,7 +495,6 @@ class Model:
 			prev_y = self.embed_id(ids)
 		return char_ids
 
-
 	def decode_word_batch(self, word_vec_batch, test=False):
 		xp = self.xp
 		self.word_decoder_lstm.reset_state()
@@ -457,8 +527,6 @@ class Model:
 	def train_word_embedding(self, char_ids):
 		xp = self.xp
 		word_vec = self.encode_word(char_ids)
-		target_ids = char_ids[::-1]
-		target_ids = np.roll(target_ids, -1, axis=0)
 
 		# reconstruction loss
 		loss_reconstruction = 0
@@ -469,7 +537,7 @@ class Model:
 				prev_y = Variable(xp.zeros((1, self.char_embed_size), dtype=xp.float32))
 			dec_in = F.concat((word_vec, prev_y))
 			y = self.word_decoder_lstm(dec_in, test=False)
-			target = Variable(xp.asanyarray([target_ids[i]], dtype=xp.int32))
+			target = Variable(xp.asanyarray([char_ids[i]], dtype=xp.int32))
 			loss = F.softmax_cross_entropy(y, target)
 			prev_y = self.embed_id(target)
 			loss_reconstruction += loss
@@ -530,8 +598,6 @@ class Model:
 		loss_reconstruction.backward()
 		self.update_generator()
 
-
-
 		# adversarial loss
 		## 0: from encoder
 		## 1: from noise
@@ -557,12 +623,66 @@ class Model:
 
 		return float(loss_reconstruction.data), float(loss_generator.data), float(loss_discriminator.data)
 
+	def gaussian_nll_keepbatch(self, x, mean, ln_var, clip=True):
+		if clip:
+			clip_min = math.log(0.001)
+			clip_max = math.log(10)
+			ln_var = F.clip(ln_var, clip_min, clip_max)
+		x_prec = F.exp(-ln_var)
+		x_diff = x - mean
+		x_power = (x_diff * x_diff) * x_prec * 0.5
+		return F.sum((math.log(2.0 * math.pi) + ln_var) * 0.5 + x_power, axis=1)
+
+	def gaussian_kl_divergence_keepbatch(self, mean, ln_var):
+		var = F.exp(ln_var)
+		kld = F.sum(mean * mean + var - ln_var - 1, axis=1) * 0.5
+		return kld
+
+	def train_word_ngram_batch(self, word_vec_batch, next_word_vec_batch):
+		output = self.word_ngram_lstm(word_vec_batch, test=False)
+		mean, ln_var = self.word_ngram_fc(output, apply_f=False)
+		nll = self.gaussian_nll_keepbatch(next_word_vec_batch, mean, ln_var)
+		kld = self.gaussian_kl_divergence_keepbatch(mean, ln_var)
+		loss = F.sum(loss + kld)
+
+		self.zero_grads_word_ngram()
+		loss.backward()
+		self.update_word_ngram()
+
+	def Pw_h(self, word_char_ids, context_char_ids):
+		word_vec = self.encode_word(word_char_ids, test=True)
+		context_vec = self.encode_word(context_char_ids, test=True)
+		self.word_ngram_lstm.reset_state()
+
+		output = self.word_ngram_lstm(context_vec, test=True)
+		mean, ln_var = self.word_ngram_fc(output, apply_f=False)
+		log_likelihood = -self.gaussian_nll_keepbatch(word_vec, mean, ln_var)
+		return math.exp(float(log_likelihood.data))
+
+	def Pw_h_batch(self, word_char_ids_batch, context_char_ids_batch):
+		word_vec = self.encode_word_batch(word_char_ids_batch, test=True)
+		context_vec = self.encode_word_batch(context_char_ids_batch, test=True)
+		self.word_ngram_lstm.reset_state()
+
+		output = self.word_ngram_lstm(context_vec, test=True)
+		mean, ln_var = self.word_ngram_fc(output, apply_f=False)
+		log_likelihood = -self.gaussian_nll_keepbatch(word_vec, mean, ln_var)
+		likelihood = F.exp(log_likelihood)
+		if self.gpu_enabled:
+			likelihood.to_cpu()
+		return likelihood.data
+
 	def reset_state(self):
 		self.word_encoder_lstm.reset_state()
 		self.word_decoder_lstm.reset_state()
 
-	def zero_grads_word_reconstruction():
-		self.optimizer_word_decoder_lstm
+	def zero_grads_word_ngram():
+		self.optimizer_word_ngram_lstm.zero_grads()
+		self.optimizer_word_ngram_fc.zero_grads()
+
+	def update_word_ngram():
+		self.optimizer_word_ngram_lstm.update()
+		self.optimizer_word_ngram_fc.update()
 
 	def zero_grads_generator(self):
 		self.optimizer_word_encoder_lstm.zero_grads()

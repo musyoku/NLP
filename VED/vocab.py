@@ -23,18 +23,18 @@ def load(dir):
 			line = line.replace("\n", "")
 			line = line.replace("\r", "")
 			if len(line) > 0:
-				data = np.empty((len(line) + 1,), dtype=np.int32)
-				# data = np.empty((len(line) + 2,), dtype=np.int32)
-				# data[0] = bos_id
+				# data = np.empty((len(line) + 1,), dtype=np.int32)
+				data = np.empty((len(line) + 2,), dtype=np.int32)
+				data[0] = bos_id
 				for i in xrange(len(line)):
 					word = line[i]
 					if word not in vocab:
 						vocab[word] = len(vocab)
 						inv_vocab[vocab[word]] = word
-					data[i] = vocab[word]
-					# data[i + 1] = vocab[word]
-				data[len(line)] = eos_id
-				# data[len(line) + 1] = eos_id
+					# data[i] = vocab[word]
+					data[i + 1] = vocab[word]
+				# data[len(line)] = eos_id
+				data[len(line) + 1] = eos_id
 				dataset.append(data)
 	n_vocab = len(vocab)
 	n_dataset = len(dataset)

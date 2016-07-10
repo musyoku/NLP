@@ -14,7 +14,7 @@ n_train = 100
 batchsize = 64
 total_time = 0
 
-current_length_limit = 20
+current_length_limit = 50
 
 def sample_batch():
 	batch_array = []
@@ -73,7 +73,7 @@ def train_batch():
 
 		model.save(args.model_dir)
 
-		for i in xrange(10):
+		for i in xrange(50):
 			sentence = sample_data()
 			encode = model.encode_word(sentence, test=True)
 			char_ids = model.decode_word(encode.data[0], argmax=True, test=True)
@@ -81,4 +81,14 @@ def train_batch():
 			print "predict:", vocab.ids_to_str(char_ids)
 			print ""
 
-train_batch()
+lattice = BigramLattice(model, vocab)
+sentence = sample_data()
+segmentation = lattice.segment(sentence)
+print segmentation
+
+lattice = BigramLattice(model, vocab)
+sentence = sample_data()
+segmentation = lattice.segment(sentence)
+print segmentation
+
+# train_batch()
